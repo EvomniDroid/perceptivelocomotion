@@ -68,11 +68,14 @@ class TerrainMotion(AmassMotion):
         # Collect all terrain origins in case some subterrains are from the same terrain_file.
         for row_idx in range(terrain.terrain_origins.shape[0]):
             for col_idx in range(terrain.terrain_origins.shape[1]):
-                subterrain_cfg = subterrain_specific_cfgs[row_idx * terrain.terrain_origins.shape[1] + col_idx]
-                difficulty = subterrain_cfg.difficulty
-                terrain_idx = int(
-                    min(max(difficulty * len(self.yaml_data["terrains"]), 0), len(self.yaml_data["terrains"]) - 1)
-                )
+                if subterrain_specific_cfgs is None:
+                    terrain_idx = 0
+                else:
+                    subterrain_cfg = subterrain_specific_cfgs[row_idx * terrain.terrain_origins.shape[1] + col_idx]
+                    difficulty = subterrain_cfg.difficulty
+                    terrain_idx = int(
+                        min(max(difficulty * len(self.yaml_data["terrains"]), 0), len(self.yaml_data["terrains"]) - 1)
+                    )
                 terrain_id_to_origins[terrain_idx].append(terrain.terrain_origins[row_idx, col_idx])
 
         # Set the origins for each motion by _all_motion_terrain_ids.

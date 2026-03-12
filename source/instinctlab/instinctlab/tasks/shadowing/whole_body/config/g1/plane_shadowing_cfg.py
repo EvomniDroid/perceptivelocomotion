@@ -183,9 +183,9 @@ class AmassMotionCfg(AmassMotionCfgBase):
     # path = os.path.expanduser("~/Datasets/UbisoftLAFAN1_GMR_g1_29dof_torsoBase_retargetted_instinctnpz")
     # path = os.path.expanduser("~/Datasets/AMASS_SMPLX-NG_GMR_29dof_g1_torsoBase_retargetted_20250901_instinctnpz")
     # path = _path_
-    path = os.path.expanduser("~/Datasets/NoKov-Marslab-Motions-instinctnpz/20251016_diveroll4_single")
+    path = "/home/zh/isaac/data&model/parkour_motion_reference"
     retargetting_func = None
-    filtered_motion_selection_filepath = None
+    filtered_motion_selection_filepath = "/home/zh/isaac/data&model/parkour_motion_reference/parkour_motion_without_run.yaml"
     motion_start_from_middle_range = [0.0, 0.8]
     motion_start_height_offset = 0.0
     ensure_link_below_zero_ground = False

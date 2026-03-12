@@ -30,6 +30,7 @@ def motion_matched_terrain(
     Returns:
         tuple: A tuple containing a list of trimesh objects and an array of poses.
     """
+    
     # Load the YAML file containing terrain and motion data
     with open(cfg.metadata_yaml) as file:
         data = yaml.safe_load(file)
@@ -40,7 +41,17 @@ def motion_matched_terrain(
     terrain_idx = int(np.clip(difficulty * len(terrains), 0, len(terrains) - 1))
     selected_terrain = terrains[terrain_idx]
 
-    terrain_file = selected_terrain["terrain_file"]
+    terrain_file = selected_terrain.get("terrain_file", None)
+    if terrain_file is None:
+        # Default fallback to the same folder or something if not provided, or raise a cleaner error.
+        print("Warning: 'terrain_file' not found in selected terrain metadata. Falling back to a flat terrain or trying default filename.")
+        # If no terrain file is provided for the terrain_id, maybe we return flat origin?
+        dim = (cfg.size[0], cfg.size[1], 0.1) # gave it slight thickness to help with collision
+        # Center the bounding box correctly so the agent doesn't fall through the world
+        terrain_mesh = trimesh.creation.box(dim, trimesh.transformations.translation_matrix((cfg.size[0]/2, cfg.size[1]/2, -0.05)))
+        origin = np.array([cfg.size[0] / 2, cfg.size[1] / 2, 0.0]) # Put origin exactly at center to avoid offset drops
+        return [terrain_mesh], origin
+
     terrain_abspath = os.path.join(cfg.path, terrain_file)
     terrain_mesh = trimesh.load(terrain_abspath, force="mesh")
 

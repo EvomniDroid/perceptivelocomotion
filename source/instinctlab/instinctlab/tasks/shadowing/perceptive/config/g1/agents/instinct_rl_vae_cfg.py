@@ -147,9 +147,7 @@ class AlgorithmCfg(InstinctRlPpoAlgorithmCfg):
         "num_actions": 29,
         "num_rewards": 1,
     }
-    teacher_logdir = os.path.expanduser(
-        "~/Data/instinctlab_logs/instinct_rl/g1_perceptive_shadowing/20260111_103654_g1Perceptive_4MotionsKneelClimbStep1_concatMotionBins__GPU0_from20260108_032900"
-    )
+    teacher_logdir = "/home/zh/isaac/instinctlab/logs/instinct_rl/g1_perceptive_shadowing/20260311_232923_g1Perceptive_concatMotionBins"
 
 
 @configclass

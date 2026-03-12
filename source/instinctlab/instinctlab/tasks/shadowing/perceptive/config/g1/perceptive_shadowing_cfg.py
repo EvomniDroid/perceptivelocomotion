@@ -25,8 +25,8 @@ from instinctlab.sensors import get_link_prim_targets
 
 G1_CFG = G1_29DOF_TORSOBASE_POPSICLE_CFG
 
-MOTION_FOLDER = "{AbsolutePathOfYourDataDirectory}"
 
+MOTION_FOLDER = "/home/zh/isaac/data&model/parkour_motion_reference"
 
 @configclass
 class TerrainMotionCfg(TerrainMotionCfgBase):
@@ -44,20 +44,8 @@ class TerrainMotionCfg(TerrainMotionCfgBase):
     env_starting_stub_sampling_strategy = "concat_motion_bins"
 
 
-@configclass
-class AMASSMotionCfg(AmassMotionCfgBase):
-    path = os.path.expanduser(MOTION_FOLDER)
-    filtered_motion_selection_filepath = None
-    ensure_link_below_zero_ground = False
-    motion_start_from_middle_range = [0.0, 0.0]
-    motion_start_height_offset = 0.0
-    motion_bin_length_s = 1.0
-    buffer_device = "output_device"
-    motion_interpolate_func = motion_interpolate_bilinear
-    velocity_estimation_method = "frontbackward"
-    env_starting_stub_sampling_strategy = "concat_motion_bins"
-
-
+# NOTE: AMASSMotion was expecting .pkl or other formats which were not in the dataset
+# We override the original block here so it reverts to finding the TerrainMotion
 motion_reference_cfg = MotionReferenceManagerCfg(
     prim_path="{ENV_REGEX_NS}/Robot/torso_link",
     robot_model_path=G1_CFG.spawn.asset_path,
@@ -114,17 +102,21 @@ class G1PerceptiveShadowingEnvCfg(perceptual_cfg.PerceptiveShadowingEnvCfg):
         # self.scene.robot.spawn.rigid_props.max_depenetration_velocity = 0.3
         self.actions.joint_pos.scale = beyondmimic_action_scale
 
+        # Force debug_vis to False for stability while checking terrain bug
+        self.scene.height_scanner.debug_vis = False
+        self.scene.camera.debug_vis = False
+
         MOTION_NAME = list(self.scene.motion_reference.motion_buffers.keys())[0]
         self.scene.motion_reference.motion_buffers[MOTION_NAME].metadata_yaml = os.path.join(
             self.scene.motion_reference.motion_buffers[MOTION_NAME].path, "metadata.yaml"
         )
+        
         PLANE_TERRAIN = False
         if PLANE_TERRAIN:
-            self.scene.motion_reference.motion_buffers.pop(MOTION_NAME)
-            self.scene.motion_reference.motion_buffers["AMASSMotion"] = AMASSMotionCfg()
             self.scene.terrain.terrain_type = "plane"
             self.scene.terrain.terrain_generator = None
         else:
+            self.scene.terrain.terrain_type = "hacked_generator"
             self.scene.terrain.terrain_generator.sub_terrains["motion_matched"].path = (
                 self.scene.motion_reference.motion_buffers[MOTION_NAME].path
             )
@@ -135,6 +127,9 @@ class G1PerceptiveShadowingEnvCfg(perceptual_cfg.PerceptiveShadowingEnvCfg):
         # match key links for observation terms
         self.observations.critic.link_pos.params["asset_cfg"].body_names = self.scene.motion_reference.link_of_interests
         self.observations.critic.link_rot.params["asset_cfg"].body_names = self.scene.motion_reference.link_of_interests
+
+        # Reduce max GPU collision pairs significantly to avoid OOM with default settings
+        self.sim.physx.gpu_max_rigid_contact_count = 1048576  # 2**20
 
         self.run_name = "g1Perceptive" + "".join(
             [
@@ -194,6 +189,7 @@ class G1PerceptiveShadowingEnvCfg_PLAY(G1PerceptiveShadowingEnvCfg):
         self.scene.terrain.terrain_generator.num_cols = 6
         # self.scene.motion_reference.motion_buffers.pop(MOTION_NAME)
         # self.scene.motion_reference.motion_buffers["AMASSMotion"] = AMASSMotionCfg()
+        MOTION_NAME = "AMASSMotion"
         # self.scene.motion_reference.motion_buffers["AMASSMotion"].motion_start_from_middle_range = [0.0, 0.0]
         # self.scene.motion_reference.motion_buffers["AMASSMotion"].motion_bin_length_s = None
         # self.scene.terrain.terrain_type = "plane"

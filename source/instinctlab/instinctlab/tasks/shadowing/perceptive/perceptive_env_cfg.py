@@ -111,7 +111,7 @@ class PerceptiveShadowingSceneCfg(InteractiveSceneCfg):
         offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
-        debug_vis=False,
+        debug_vis=True,
         mesh_prim_paths=["/World/ground"],
     )
     camera = NoisyGroupedRayCasterCameraCfg(
@@ -172,7 +172,7 @@ class PerceptiveShadowingSceneCfg(InteractiveSceneCfg):
         },
         # data_histories={"distance_to_image_plane": 5},
         update_period=1 / 60,
-        debug_vis=False,
+        debug_vis=True,
         depth_clipping_behavior="max",  # clip to the maximum value
         min_distance=0.05,
     )

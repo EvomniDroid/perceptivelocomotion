@@ -38,7 +38,7 @@ G1_CFG = G1_29DOF_TORSOBASE_POPSICLE_CFG
 PROPRIO_HISTORY_LENGTH = 8
 
 MOTION_FOLDER = (
-    "~/Datasets/NoKov-Marslab-Motions-instinctnpz/20251116_50cm_kneeClimbStep1"
+    "/home/zh/isaac/data&model/parkour_motion_reference"
     # "~/Datasets/NoKov-Marslab-Motions-instinctnpz/20251116_50cm_kneeClimbStep1/20251106_diveroll4_roadRamp_noWall"
 )
 
@@ -216,8 +216,13 @@ class G1PerceptiveVaeEnvCfg(perceptual_cfg.PerceptiveShadowingEnvCfg):
         self.actions.joint_pos.scale = beyondmimic_action_scale
 
         motion_buffer = list(self.scene.motion_reference.motion_buffers.values())[0]
-        self.scene.terrain.terrain_generator.sub_terrains["motion_matched"].path = motion_buffer.path
-        self.scene.terrain.terrain_generator.sub_terrains["motion_matched"].metadata_yaml = motion_buffer.metadata_yaml
+        if self.scene.terrain.terrain_type == "hacked_generator" and self.scene.terrain.terrain_generator is not None:
+            self.scene.terrain.terrain_generator.sub_terrains["motion_matched"].path = motion_buffer.path
+            self.scene.terrain.terrain_generator.sub_terrains["motion_matched"].metadata_yaml = motion_buffer.metadata_yaml
+
+        # Fix OOM for PhysX
+        if hasattr(self, "sim") and hasattr(self.sim, "physx"):
+            self.sim.physx.gpu_max_rigid_contact_count = 2 ** 20
 
         self.run_name = "g1PerceptiveVae" + "".join(
             [
