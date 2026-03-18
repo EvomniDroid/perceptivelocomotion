@@ -155,7 +155,7 @@ class MultiRewardManager(RewardManager):
                 
                 # 仅在第一次循环时触发断点
                 if not _has_pdb_triggered:
-                    import pdb; pdb.set_trace()
+                    # import pdb; pdb.set_trace()
                     print("这里是奖励")
                     print("4.2.0.1")
                     print(f"！！！！当前计算的奖励项是: {term_name} ！！！！")
