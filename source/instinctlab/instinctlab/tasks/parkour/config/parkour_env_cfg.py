@@ -27,7 +27,11 @@ from instinctlab.assets.unitree_g1 import beyondmimic_action_scale
 from instinctlab.managers import MultiRewardCfg
 from instinctlab.motion_reference import MotionReferenceManagerCfg
 from instinctlab.sensors import Grid3dPointsGeneratorCfg, NoisyGroupedRayCasterCameraCfg, VolumePointsCfg
-from instinctlab.terrains import GreedyconcatEdgeCylinderCfg, TerrainImporterCfg
+from instinctlab.terrains import GreedyconcatEdgeCylinderCfg
+from instinctlab.terrains.terrain_importer_cfg import TerrainImporterCfg
+from instinctlab.terrains.terrain_importer import TerrainImporter
+from instinctlab.terrains.terrain_generator_cfg import FiledTerrainGeneratorCfg
+from instinctlab.terrains.terrain_generator import FiledTerrainGenerator
 from instinctlab.utils.noise import (
     CropAndResizeCfg,
     DepthArtifactNoiseCfg,
@@ -42,7 +46,22 @@ __file_dir__ = os.path.dirname(os.path.realpath(__file__))
 ##
 # Scene definition
 ##
-ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
+from instinctlab.terrains.terrain_generator_cfg import FiledTerrainGeneratorCfg
+
+def _inject_name_to_cfgs(sub_terrains):
+    for k, v in sub_terrains.items():
+        try:
+            setattr(v, "name", k)
+        except Exception:
+            object.__setattr__(v, "name", k)
+    # 打印所有 key 和 name，便于调试
+    print("[DEBUG] sub_terrains name分配:")
+    for k, v in sub_terrains.items():
+        print(f"[DEBUG] key={k}, cfg.name={getattr(v, 'name', None)}, cfg type={type(v)}")
+    return sub_terrains
+
+ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
+    class_type=FiledTerrainGenerator,
     seed=0,
     size=(8.0, 8.0),
     border_width=3,
@@ -53,7 +72,7 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
     slope_threshold=1.0,
     use_cache=False,
     curriculum=True,
-    sub_terrains={
+    sub_terrains=_inject_name_to_cfgs({
         "perlin_rough": terrain_gen.PerlinPlaneTerrainCfg(
             proportion=0.05,
             noise_scale=[0.0, 0.1],
@@ -280,7 +299,7 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
                 ),
             },
         ),
-    },
+    }),
 )
 
 
@@ -288,8 +307,9 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
 class SceneCfg(InteractiveSceneCfg):
     # ground terrain
     terrain = TerrainImporterCfg(
+        class_type=TerrainImporter,
         prim_path="/World/ground",
-        terrain_type="generator",
+        terrain_type="hacked_generator",
         terrain_generator=ROUGH_TERRAINS_CFG,
         max_init_terrain_level=5,
         collision_group=-1,

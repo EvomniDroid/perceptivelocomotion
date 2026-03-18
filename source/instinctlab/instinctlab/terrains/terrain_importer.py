@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 class TerrainImporter(TerrainImporterBase):
     def __init__(self, cfg: TerrainImporterCfg):
+        print("[InstinctLab TerrainImporter] __init__ called!")
         self._virtual_obstacles = {}
         for name, virtual_obstacle_cfg in cfg.virtual_obstacles.items():
             if virtual_obstacle_cfg is None:
@@ -80,11 +81,13 @@ class TerrainImporter(TerrainImporterBase):
             if self.cfg.terrain_generator is None:
                 raise ValueError("Input terrain type is 'generator' but no value provided for 'terrain_generator'.")
             # generate the terrain
-            self.terrain_generator = getattr(
-                self.cfg.terrain_generator,
-                "class_type",
-                TerrainGenerator,
-            )(cfg=self.cfg.terrain_generator, device=self.device)
+            # IsaacLab会自动根据class_type实例化，这里直接用
+            if hasattr(self.cfg.terrain_generator, "terrain_mesh"):
+                self.terrain_generator = self.cfg.terrain_generator
+            else:
+                # 兼容传入的是配置类的情况
+                from instinctlab.terrains.terrain_generator import FiledTerrainGenerator
+                self.terrain_generator = FiledTerrainGenerator(cfg=self.cfg.terrain_generator, device=self.device)
             self.import_mesh("terrain", self.terrain_generator.terrain_mesh)
             # configure the terrain origins based on the terrain generator
             self.configure_env_origins(self.terrain_generator.terrain_origins)

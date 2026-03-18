@@ -154,13 +154,13 @@ class MultiRewardManager(RewardManager):
                 # 🔥最核心的一行！这行代码去运行配置表里注册的奖励函数(如动作模仿、越界惩罚等)，将返回值乘以配置好的权重
                 
                 # 仅在第一次循环时触发断点
-                if not _has_pdb_triggered:
-                    # import pdb; pdb.set_trace()
-                    print("这里是奖励")
-                    print("4.2.0.1")
-                    print(f"！！！！当前计算的奖励项是: {term_name} ！！！！")
-                    print("！！！！从step里面进的这里reward，可以按下s，注意下这里有几个value！！！！")
-                    _has_pdb_triggered = True
+                # if not _has_pdb_triggered:
+                #     # import pdb; pdb.set_trace()
+                #     print("这里是奖励")
+                #     print("4.2.0.1")
+                #     print(f"！！！！当前计算的奖励项是: {term_name} ！！！！")
+                #     print("！！！！从step里面进的这里reward，可以按下s，注意下这里有几个value！！！！")
+                #     _has_pdb_triggered = True
                 
                 value = term_cfg.func(self._env, **term_cfg.params) * term_cfg.weight
                 
