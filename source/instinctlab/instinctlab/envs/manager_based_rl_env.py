@@ -20,8 +20,9 @@ class InstinctRlEnv(ManagerBasedRLEnv):
                 # print("\n[CHECK] 所有地形patch的name:")
                 for i, cfg in enumerate(patch_cfgs):
                     # print(f"[CHECK] patch {i}: name={getattr(cfg, 'name', None)}")
+                    pass
                 # 修正地形类型列表，按 env 顺序分配
-                num_envs = getattr(self, 'num_envs', len(patch_cfgs))
+                    num_envs = getattr(self, 'num_envs', len(patch_cfgs))
                 self.terrain_type_list = [patch_cfgs[i % len(patch_cfgs)].name for i in range(num_envs)]
                 # print(f"[CHECK] 修正后的 terrain_type_list: {self.terrain_type_list}")
     """This class adds additional logging mechanism on sensors to get more
@@ -96,11 +97,13 @@ class InstinctRlEnv(ManagerBasedRLEnv):
                 # print(f"[DEBUG] env_id={env_id}, idx={idx}, terrain_name={terrain_name}")
             else:
                 # print(f"[DEBUG] env_id={env_id}, idx={env_id}, terrain_name=unknown (no cfg)")
+                pass
             self.terrain_type_list[env_id] = terrain_name
 
         # 若subterrain_cfgs依然为None，输出一次性警告
         if subterrain_cfgs is None:
             # print("[WARN] 地形类型分配失败：未找到subterrain_specific_cfgs，所有地形将标记为unknown")
+            pass
 
         return return_
 
