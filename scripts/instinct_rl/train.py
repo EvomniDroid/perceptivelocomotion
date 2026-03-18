@@ -123,7 +123,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     """使用 Instinct-RL 智能体进行训练主函数。"""
     
     # === 在这里打断点 ===
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     print("1")
     
     # 使用来自命令行的非 hydra 参数覆盖相关配置
@@ -183,12 +183,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"[INFO] Resuming experiment from directory: {resume_path}")
         resume_run_name = os.path.basename(os.path.dirname(resume_path))
         log_dir += f"_from{resume_run_name.split('_')[0]}_{resume_run_name.split('_')[1]}"
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     print("2")
     # 创建 isaac 仿真环境
     print("进入环境构造")
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     print("2.99")
     print("环境构造完成")
     # 为视频录制套上 Wrapper
@@ -209,7 +209,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # 封装环境适配 Instinct-RL 的读取要求
     env = InstinctRlVecEnvWrapper(env)
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     print("3")
     # 从 instinct-rl 创建跑者 (runner)
     runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
@@ -235,7 +235,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             "cProfile 性能分析已启用。程序完成运行后，会自动在日志目录下保存为以 .profile 结尾的日志文件。"
         )
         cprofile.enable()
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     print("4")
     print("按s")
     # 开始执行主训练环节
@@ -243,7 +243,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         num_learning_iterations=agent_cfg.max_iterations,
         init_at_random_ep_len=getattr(agent_cfg, "init_at_random_ep_len", False),
     )
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     print("5")
     print("迭代")
     if args_cli.cprofile:
