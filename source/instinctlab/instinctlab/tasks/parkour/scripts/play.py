@@ -272,14 +272,30 @@ def main():
             obs, rewards, dones, infos = env.step(actions)
 
             if save_depth_dir is not None and timestep % args_cli.save_depth_interval == 0:
-                depth_data = env.unwrapped.scene["camera"].data.output["distance_to_image_plane"]
-                if depth_data is not None and len(depth_data) > 0:
+                try:
+                    depth_data = env.unwrapped.scene["camera"].data.output["distance_to_image_plane"]
+                    if depth_data is None:
+                        print(f"[WARN] timestep {timestep}: depth_data is None")
+                        continue
+                    if len(depth_data) == 0:
+                        print(f"[WARN] timestep {timestep}: depth_data is empty")
+                        continue
                     depth_np = depth_data[0].cpu().numpy()
                     if depth_np.ndim == 3:
                         depth_np = depth_np.squeeze(-1)
-                    depth_normalized = ((depth_np - depth_np.min()) / (depth_np.max() - depth_np.min() + 1e-8) * 255).astype(np.uint8)
+                    if depth_np.size == 0 or len(depth_np.shape) < 2 or depth_np.shape[0] == 0 or depth_np.shape[1] == 0:
+                        print(f"[WARN] timestep {timestep}: invalid depth shape={depth_np.shape}")
+                        continue
+                    depth_np = np.nan_to_num(depth_np, nan=0.0, posinf=10.0, neginf=0.0)
+                    d_min, d_max = depth_np.min(), depth_np.max()
+                    if d_max - d_min > 1e-8:
+                        depth_normalized = ((depth_np - d_min) / (d_max - d_min) * 255).astype(np.uint8)
+                    else:
+                        depth_normalized = np.zeros_like(depth_np, dtype=np.uint8)
                     img = Image.fromarray(depth_normalized)
-                    img.save(os.path.join(save_depth_dir, f"depth_step_{timestep:06d}.png"))
+                    img_path = os.path.join(save_depth_dir, f"depth_step_{timestep:06d}.png")
+                    img.save(img_path)
+                    print(f"[INFO] timestep {timestep}: saved depth image {img_path}, shape={depth_np.shape}, range=[{d_min:.2f}, {d_max:.2f}]")
 
                     terrain_type = "unknown"
                     if hasattr(env.unwrapped, "terrain_type_list") and len(env.unwrapped.terrain_type_list) > 0:
@@ -288,6 +304,10 @@ def main():
                         f.write(f"step: {timestep}\n")
                         f.write(f"terrain: {terrain_type}\n")
                         f.write(f"env_id: 0\n")
+                except Exception as e:
+                    print(f"[ERROR] timestep {timestep}: failed to save depth image: {e}")
+                    import traceback
+                    traceback.print_exc()
 
             timestep += 1
 
