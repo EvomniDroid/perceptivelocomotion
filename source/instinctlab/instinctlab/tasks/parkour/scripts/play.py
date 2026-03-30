@@ -37,6 +37,7 @@ parser.add_argument("--keyboard_control", action="store_true", default=False, he
 parser.add_argument("--keyboard_linvel_step", type=float, default=0.5, help="Linear velocity change per keyboard step.")
 parser.add_argument("--keyboard_angvel", type=float, default=1.0, help="Angular velocity set by keyboard.")
 parser.add_argument("--debug_ray", action="store_true", default=False, help="Enable raycaster visualization.")
+parser.add_argument("--save_depth_interval", type=int, default=0, help="Save depth image every N steps. 0 means disabled.")
 
 # append Instinct-RL cli arguments
 cli_args.add_instinct_rl_args(parser)
@@ -55,6 +56,8 @@ simulation_app = app_launcher.app
 
 import gymnasium as gym
 import torch
+from PIL import Image
+import numpy as np
 
 import carb.input
 import omni.appwindow
@@ -135,6 +138,13 @@ def main():
         env_cfg.scene.right_height_scanner.debug_vis = True
         env_cfg.scene.leg_volume_points.debug_vis = True
         env_cfg.scene.camera.debug_vis = True
+
+    save_depth_dir = None
+    if args_cli.save_depth_interval > 0:
+        save_depth_dir = os.path.join(log_dir, "depth_images")
+        os.makedirs(save_depth_dir, exist_ok=True)
+        print(f"[INFO] Saving depth images to: {save_depth_dir}")
+        print(f"[INFO] Will save every {args_cli.save_depth_interval} steps")
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
@@ -260,7 +270,18 @@ def main():
                 actions[:] = 0.0
             # env stepping
             obs, rewards, dones, infos = env.step(actions)
-        timestep += 1
+
+            if save_depth_dir is not None and timestep % args_cli.save_depth_interval == 0:
+                depth_data = env.unwrapped.scene["camera"].data.output["distance_to_image_plane"]
+                if depth_data is not None and len(depth_data) > 0:
+                    depth_np = depth_data[0].cpu().numpy()
+                    if depth_np.ndim == 3:
+                        depth_np = depth_np.squeeze(-1)
+                    depth_normalized = ((depth_np - depth_np.min()) / (depth_np.max() - depth_np.min() + 1e-8) * 255).astype(np.uint8)
+                    img = Image.fromarray(depth_normalized)
+                    img.save(os.path.join(save_depth_dir, f"depth_step_{timestep:06d}.png"))
+
+            timestep += 1
 
         # exit the loop if video_length is meet
         if args_cli.video:
