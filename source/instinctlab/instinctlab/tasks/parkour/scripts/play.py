@@ -36,6 +36,7 @@ parser.add_argument("--zero_act_until", type=int, default=0, help="Zero actions 
 parser.add_argument("--keyboard_control", action="store_true", default=False, help="Enable keyboard control.")
 parser.add_argument("--keyboard_linvel_step", type=float, default=0.5, help="Linear velocity change per keyboard step.")
 parser.add_argument("--keyboard_angvel", type=float, default=1.0, help="Angular velocity set by keyboard.")
+parser.add_argument("--debug_ray", action="store_true", default=False, help="Enable raycaster visualization.")
 
 # append Instinct-RL cli arguments
 cli_args.add_instinct_rl_args(parser)
@@ -128,6 +129,12 @@ def main():
     if args_cli.keyboard_control:
         env_cfg.scene.num_envs = 1
         env_cfg.episode_length_s = 1e10
+
+    if args_cli.debug_ray:
+        env_cfg.scene.left_height_scanner.debug_vis = True
+        env_cfg.scene.right_height_scanner.debug_vis = True
+        env_cfg.scene.leg_volume_points.debug_vis = True
+        env_cfg.scene.camera.debug_vis = True
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
