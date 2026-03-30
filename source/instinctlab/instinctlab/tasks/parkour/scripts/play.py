@@ -281,6 +281,14 @@ def main():
                     img = Image.fromarray(depth_normalized)
                     img.save(os.path.join(save_depth_dir, f"depth_step_{timestep:06d}.png"))
 
+                    terrain_type = "unknown"
+                    if hasattr(env.unwrapped, "terrain_type_list") and len(env.unwrapped.terrain_type_list) > 0:
+                        terrain_type = env.unwrapped.terrain_type_list[0]
+                    with open(os.path.join(save_depth_dir, f"depth_step_{timestep:06d}_terrain.txt"), "w") as f:
+                        f.write(f"step: {timestep}\n")
+                        f.write(f"terrain: {terrain_type}\n")
+                        f.write(f"env_id: 0\n")
+
             timestep += 1
 
         # exit the loop if video_length is meet
