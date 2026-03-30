@@ -63,7 +63,8 @@ from instinct_rl.utils.utils import get_obs_slice, get_subobs_by_components, get
 
 from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent
 from isaaclab.utils.dict import print_dict
-from isaaclab.utils.io import load_pickle, load_yaml
+# from isaaclab.utils.io import load_pickle, load_yaml
+from isaaclab.utils.io import  load_yaml
 from isaaclab_tasks.utils import get_checkpoint_path, parse_env_cfg
 
 # Import extensions to set up environment tasks
@@ -96,6 +97,9 @@ def main():
     log_root_path = os.path.abspath(log_root_path)
     agent_cfg.load_run = args_cli.load_run
     if agent_cfg.load_run is not None:
+        # Normalize load_run to avoid trailing slash causing os.path.basename() to return ''
+        # which would make get_checkpoint_path treat it as a regex that matches everything.
+        agent_cfg.load_run = agent_cfg.load_run.rstrip("/\\")
         print(f"[INFO] Loading experiment from directory: {log_root_path}")
         if os.path.isabs(agent_cfg.load_run):
             resume_path = get_checkpoint_path(
