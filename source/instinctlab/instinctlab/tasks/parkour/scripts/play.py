@@ -304,6 +304,8 @@ def main():
                         f.write(f"step: {timestep}\n")
                         f.write(f"terrain: {terrain_type}\n")
                         f.write(f"env_id: 0\n")
+                        f.write(f"image_shape: {depth_np.shape}\n")
+                        f.write(f"depth_range: [{d_min:.4f}, {d_max:.4f}]\n")
                 except Exception as e:
                     print(f"[ERROR] timestep {timestep}: failed to save depth image: {e}")
                     import traceback
