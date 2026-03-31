@@ -58,6 +58,7 @@ import gymnasium as gym
 import torch
 from PIL import Image
 import numpy as np
+import cv2
 
 import carb.input
 import omni.appwindow
@@ -292,20 +293,26 @@ def main():
                         depth_normalized = ((depth_np - d_min) / (d_max - d_min) * 255).astype(np.uint8)
                     else:
                         depth_normalized = np.zeros_like(depth_np, dtype=np.uint8)
-                    img = Image.fromarray(depth_normalized)
-                    img_path = os.path.join(save_depth_dir, f"depth_step_{timestep:06d}.png")
-                    img.save(img_path)
-                    print(f"[INFO] timestep {timestep}: saved depth image {img_path}, shape={depth_np.shape}, range=[{d_min:.2f}, {d_max:.2f}]")
+
+                    img_depth = Image.fromarray(depth_normalized)
+                    img_depth.save(os.path.join(save_depth_dir, f"step_{timestep:06d}_depth.png"))
+
+                    depth_colored = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
+                    depth_colored_rgb = cv2.cvtColor(depth_colored, cv2.COLOR_BGR2RGB)
+                    img_colored = Image.fromarray(depth_colored_rgb)
+                    img_colored.save(os.path.join(save_depth_dir, f"step_{timestep:06d}_color.png"))
 
                     terrain_type = "unknown"
                     if hasattr(env.unwrapped, "terrain_type_list") and len(env.unwrapped.terrain_type_list) > 0:
                         terrain_type = env.unwrapped.terrain_type_list[0]
-                    with open(os.path.join(save_depth_dir, f"depth_step_{timestep:06d}_terrain.txt"), "w") as f:
+                    with open(os.path.join(save_depth_dir, f"step_{timestep:06d}_info.txt"), "w") as f:
                         f.write(f"step: {timestep}\n")
                         f.write(f"terrain: {terrain_type}\n")
                         f.write(f"env_id: 0\n")
                         f.write(f"image_shape: {depth_np.shape}\n")
                         f.write(f"depth_range: [{d_min:.4f}, {d_max:.4f}]\n")
+
+                    print(f"[INFO] timestep {timestep}: saved depth images (depth+color+info), shape={depth_np.shape}, range=[{d_min:.2f}, {d_max:.2f}]")
                 except Exception as e:
                     print(f"[ERROR] timestep {timestep}: failed to save depth image: {e}")
                     import traceback
