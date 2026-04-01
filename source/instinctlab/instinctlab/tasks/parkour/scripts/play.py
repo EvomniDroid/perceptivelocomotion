@@ -143,12 +143,15 @@ def main():
         env_cfg.scene.leg_volume_points.debug_vis = True
         env_cfg.scene.camera.debug_vis = True
 
+    import time
+    run_id = time.strftime("%Y%m%d_%H%M%S")
     save_depth_dir = None
     if args_cli.save_depth_interval > 0:
-        save_depth_dir = os.path.join(log_dir, "depth_images")
+        save_depth_dir = os.path.join(log_dir, f"depth_images_{run_id}")
         os.makedirs(save_depth_dir, exist_ok=True)
         print(f"[INFO] Saving depth images to: {save_depth_dir}")
         print(f"[INFO] Will save every {args_cli.save_depth_interval} steps")
+        print(f"[INFO] Run ID: {run_id}")
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
@@ -318,6 +321,7 @@ def main():
                         img_colored.save(os.path.join(env_save_dir, f"step_{timestep:06d}_env{env_id:02d}_color.png"))
 
                         with open(os.path.join(env_save_dir, f"step_{timestep:06d}_env{env_id:02d}_info.txt"), "w") as f:
+                            f.write(f"run_id: {run_id}\n")
                             f.write(f"step: {timestep}\n")
                             f.write(f"terrain: {terrain_type}\n")
                             f.write(f"env_id: {env_id}\n")
