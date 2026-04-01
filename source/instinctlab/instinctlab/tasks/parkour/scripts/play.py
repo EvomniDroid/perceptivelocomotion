@@ -257,6 +257,8 @@ def main():
     # reset environment
     obs, _ = env.get_observations()
     timestep = 0
+    episode_counts = {}  # track episodes per env
+    num_envs = env.unwrapped.scene.num_envs
     # simulate environment
     while simulation_app.is_running():
         # run everything in inference mode
@@ -278,6 +280,10 @@ def main():
                 actions[:] = 0.0
             # env stepping
             obs, rewards, dones, infos = env.step(actions)
+
+            for env_id in range(num_envs):
+                if dones[env_id]:
+                    episode_counts[env_id] = episode_counts.get(env_id, 0) + 1
 
             if args_cli.video:
                 env.unwrapped.render()
@@ -323,12 +329,13 @@ def main():
                         with open(os.path.join(env_save_dir, f"step_{timestep:06d}_env{env_id:02d}_info.txt"), "w") as f:
                             f.write(f"run_id: {run_id}\n")
                             f.write(f"step: {timestep}\n")
+                            f.write(f"episode: {episode_counts.get(env_id, 0)}\n")
                             f.write(f"terrain: {terrain_type}\n")
                             f.write(f"env_id: {env_id}\n")
                             f.write(f"image_shape: {depth_np.shape}\n")
                             f.write(f"depth_range: [{d_min:.4f}, {d_max:.4f}]\n")
 
-                    print(f"[INFO] timestep {timestep}: saved {num_envs} envs across different terrains")
+                    print(f"[INFO] timestep {timestep}: saved {num_envs} envs, episodes completed: {sum(episode_counts.values())}")
                 except Exception as e:
                     print(f"[ERROR] timestep {timestep}: failed to save depth image: {e}")
                     import traceback
