@@ -48,6 +48,9 @@ args_cli = parser.parse_args()
 if args_cli.video:
     args_cli.enable_cameras = True
 
+print(f"[DEBUG] args_cli.video = {args_cli.video}")
+print(f"[DEBUG] args_cli.enable_cameras = {getattr(args_cli, 'enable_cameras', 'NOT_SET')}")
+
 # launch omniverse app
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -161,6 +164,7 @@ def main():
         print("[INFO] Recording videos during playing.")
         print_dict(video_kwargs, nesting=4)
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
+        print(f"[DEBUG] RecordVideo wrapper applied. env type: {type(env)}")
 
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv):
@@ -272,6 +276,9 @@ def main():
             # env stepping
             obs, rewards, dones, infos = env.step(actions)
 
+            if args_cli.video:
+                env.unwrapped.render()
+
             if save_depth_dir is not None and timestep % args_cli.save_depth_interval == 0:
                 try:
                     depth_data = env.unwrapped.scene["camera"].data.output["distance_to_image_plane"]
@@ -312,7 +319,7 @@ def main():
                         f.write(f"image_shape: {depth_np.shape}\n")
                         f.write(f"depth_range: [{d_min:.4f}, {d_max:.4f}]\n")
 
-                    print(f"[INFO] timestep {timestep}: saved depth images (depth+color+info), shape={depth_np.shape}, range=[{d_min:.2f}, {d_max:.2f}]")
+                    print(f"[INFO] timestep {timestep}: terrain={terrain_type}, saved depth images (depth+color+info), shape={depth_np.shape}, range=[{d_min:.2f}, {d_max:.2f}]")
                 except Exception as e:
                     print(f"[ERROR] timestep {timestep}: failed to save depth image: {e}")
                     import traceback

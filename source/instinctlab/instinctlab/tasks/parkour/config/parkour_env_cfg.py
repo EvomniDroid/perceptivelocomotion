@@ -14,7 +14,9 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
+from isaaclab.sensors.camera import CameraCfg
 from isaaclab.sensors.ray_caster.patterns import PinholeCameraPatternCfg
+from isaaclab.sim.spawners.sensors import PinholeCameraCfg
 from isaaclab.terrains import FlatPatchSamplingCfg, TerrainGeneratorCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
@@ -414,6 +416,23 @@ class SceneCfg(InteractiveSceneCfg):
         },
         data_histories={"distance_to_image_plane_noised": 37},
     )
+    # rgb_camera = CameraCfg(
+    #     prim_path="/World/rgb_cam",
+    #     spawn=PinholeCameraCfg(
+    #         focal_length=24.0,
+    #         horizontal_aperture=20.955,
+    #         clipping_range=(0.01, 1e6),
+    #     ),
+    #     width=64,
+    #     height=36,
+    #     offset=CameraCfg.OffsetCfg(
+    #         pos=(0.0, 0.0, 0.0),
+    #         rot=(1.0, 0.0, 0.0, 0.0),
+    #         convention="world",
+    #     ),
+    #     data_types=["rgb"],
+    #     update_period=0.02,
+    # )
     # lights
     sky_light = AssetBaseCfg(
         prim_path="/World/skyLight",
