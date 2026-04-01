@@ -288,38 +288,43 @@ def main():
                     if len(depth_data) == 0:
                         print(f"[WARN] timestep {timestep}: depth_data is empty")
                         continue
-                    depth_np = depth_data[0].cpu().numpy()
-                    if depth_np.ndim == 3:
-                        depth_np = depth_np.squeeze(-1)
-                    if depth_np.size == 0 or len(depth_np.shape) < 2 or depth_np.shape[0] == 0 or depth_np.shape[1] == 0:
-                        print(f"[WARN] timestep {timestep}: invalid depth shape={depth_np.shape}")
-                        continue
-                    depth_np = np.nan_to_num(depth_np, nan=0.0, posinf=10.0, neginf=0.0)
-                    d_min, d_max = depth_np.min(), depth_np.max()
-                    if d_max - d_min > 1e-8:
-                        depth_normalized = ((depth_np - d_min) / (d_max - d_min) * 255).astype(np.uint8)
-                    else:
-                        depth_normalized = np.zeros_like(depth_np, dtype=np.uint8)
 
-                    img_depth = Image.fromarray(depth_normalized)
-                    img_depth.save(os.path.join(save_depth_dir, f"step_{timestep:06d}_depth.png"))
+                    num_envs = depth_data.shape[0]
+                    terrain_type_list = getattr(env.unwrapped, "terrain_type_list", [])
 
-                    depth_colored = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
-                    depth_colored_rgb = cv2.cvtColor(depth_colored, cv2.COLOR_BGR2RGB)
-                    img_colored = Image.fromarray(depth_colored_rgb)
-                    img_colored.save(os.path.join(save_depth_dir, f"step_{timestep:06d}_color.png"))
+                    for env_id in range(num_envs):
+                        depth_np = depth_data[env_id].cpu().numpy()
+                        if depth_np.ndim == 3:
+                            depth_np = depth_np.squeeze(-1)
+                        if depth_np.size == 0 or len(depth_np.shape) < 2 or depth_np.shape[0] == 0 or depth_np.shape[1] == 0:
+                            continue
+                        depth_np = np.nan_to_num(depth_np, nan=0.0, posinf=10.0, neginf=0.0)
+                        d_min, d_max = depth_np.min(), depth_np.max()
+                        if d_max - d_min > 1e-8:
+                            depth_normalized = ((depth_np - d_min) / (d_max - d_min) * 255).astype(np.uint8)
+                        else:
+                            depth_normalized = np.zeros_like(depth_np, dtype=np.uint8)
 
-                    terrain_type = "unknown"
-                    if hasattr(env.unwrapped, "terrain_type_list") and len(env.unwrapped.terrain_type_list) > 0:
-                        terrain_type = env.unwrapped.terrain_type_list[0]
-                    with open(os.path.join(save_depth_dir, f"step_{timestep:06d}_info.txt"), "w") as f:
-                        f.write(f"step: {timestep}\n")
-                        f.write(f"terrain: {terrain_type}\n")
-                        f.write(f"env_id: 0\n")
-                        f.write(f"image_shape: {depth_np.shape}\n")
-                        f.write(f"depth_range: [{d_min:.4f}, {d_max:.4f}]\n")
+                        terrain_type = terrain_type_list[env_id] if env_id < len(terrain_type_list) else "unknown"
+                        env_save_dir = os.path.join(save_depth_dir, terrain_type)
+                        os.makedirs(env_save_dir, exist_ok=True)
 
-                    print(f"[INFO] timestep {timestep}: terrain={terrain_type}, saved depth images (depth+color+info), shape={depth_np.shape}, range=[{d_min:.2f}, {d_max:.2f}]")
+                        img_depth = Image.fromarray(depth_normalized)
+                        img_depth.save(os.path.join(env_save_dir, f"step_{timestep:06d}_env{env_id:02d}_depth.png"))
+
+                        depth_colored = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
+                        depth_colored_rgb = cv2.cvtColor(depth_colored, cv2.COLOR_BGR2RGB)
+                        img_colored = Image.fromarray(depth_colored_rgb)
+                        img_colored.save(os.path.join(env_save_dir, f"step_{timestep:06d}_env{env_id:02d}_color.png"))
+
+                        with open(os.path.join(env_save_dir, f"step_{timestep:06d}_env{env_id:02d}_info.txt"), "w") as f:
+                            f.write(f"step: {timestep}\n")
+                            f.write(f"terrain: {terrain_type}\n")
+                            f.write(f"env_id: {env_id}\n")
+                            f.write(f"image_shape: {depth_np.shape}\n")
+                            f.write(f"depth_range: [{d_min:.4f}, {d_max:.4f}]\n")
+
+                    print(f"[INFO] timestep {timestep}: saved {num_envs} envs across different terrains")
                 except Exception as e:
                     print(f"[ERROR] timestep {timestep}: failed to save depth image: {e}")
                     import traceback
