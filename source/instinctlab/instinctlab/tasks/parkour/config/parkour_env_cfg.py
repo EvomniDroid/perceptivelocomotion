@@ -301,6 +301,52 @@ ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
                 ),
             },
         ),
+        # "my_wave_terrain": terrain_gen.PerlinWaveTerrainCfg(
+        #     proportion=0.05,
+        #     amplitude_range=(0.1, 0.4),
+        #     num_waves=3,
+        #     border_width=1.0,
+        #     wall_prob=[0.3, 0.3, 0.3, 0.3],
+        #     wall_height=5.0,
+        #     wall_thickness=0.05,
+        #     perlin_cfg=terrain_gen.PerlinPlaneTerrainCfg(
+        #         noise_scale=0.02,
+        #         noise_frequency=20,
+        #         fractal_octaves=2,
+        #         fractal_lacunarity=2.0,
+        #         fractal_gain=0.25,
+        #         centering=True,
+        #     ),
+        #     flat_patch_sampling={
+        #         "target": FlatPatchSamplingCfg(
+        #             num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
+        #         ),
+        #     },
+        # ),
+        # "my_stepping_stones": terrain_gen.PerlinSteppingStonesTerrainCfg(
+        #     proportion=0.05,
+        #     stone_width_range=(0.2, 0.6),
+        #     stone_distance_range=(0.3, 0.8),
+        #     stone_height_max=0.15,
+        #     platform_width=0.8,
+        #     border_width=1.0,
+        #     wall_prob=[0.3, 0.3, 0.3, 0.3],
+        #     wall_height=5.0,
+        #     wall_thickness=0.05,
+        #     perlin_cfg=terrain_gen.PerlinPlaneTerrainCfg(
+        #         noise_scale=0.01,
+        #         noise_frequency=20,
+        #         fractal_octaves=2,
+        #         fractal_lacunarity=2.0,
+        #         fractal_gain=0.25,
+        #         centering=True,
+        #     ),
+        #     flat_patch_sampling={
+        #         "target": FlatPatchSamplingCfg(
+        #             num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
+        #         ),
+        #     },
+        # ),
     }),
 )
 
