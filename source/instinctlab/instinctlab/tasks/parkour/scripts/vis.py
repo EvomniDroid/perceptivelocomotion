@@ -90,6 +90,14 @@ from instinctlab.terrains import (
     PerlinInvertedPyramidSlopedTerrainCfg,
     PerlinWaveTerrainCfg,
     PerlinSteppingStonesTerrainCfg,
+    PerlinParapetTerrainCfg,
+    PerlinGutterTerrainCfg,
+    PerlinStairsUpDownTerrainCfg,
+    PerlinStairsDownUpTerrainCfg,
+    PerlinTiltTerrainCfg,
+    PerlinTiltedRampTerrainCfg,
+    PerlinSlopeTerrainCfg,
+    PerlinCrossStoneTerrainCfg,
 )
 
 
@@ -128,7 +136,7 @@ MY_TERRAIN_CFG = FiledTerrainGeneratorCfg(
     size=(5.0, 5.0),          # 每个子地形的大小（米）
     border_width=0.2,            # 边界宽度
     num_rows=1,              # 地形行数
-    num_cols=2,              # 地形列数
+    num_cols=20,              # 地形列数
     horizontal_scale=0.05,     # 水平分辨率（越小越精细）
     vertical_scale=0.005,      # 垂直分辨率（越小越精细）
     slope_threshold=1.0,       # 斜坡阈值
@@ -136,20 +144,24 @@ MY_TERRAIN_CFG = FiledTerrainGeneratorCfg(
     curriculum=True,           # 启用课程学习
     sub_terrains=_inject_name_to_cfgs({
 
+        # ==================================================================
+        #  基础 Perlin 噪声地形（8种）
+        # ==================================================================
+
         # ------------------------------------------------------------------
-        # 地形1: Perlin噪声粗糙地面 - 简单的随机粗糙地面  
+        # 地形1: Perlin噪声粗糙地面 - 简单的随机粗糙地面
         # ------------------------------------------------------------------
         "perlin_rough": PerlinPlaneTerrainCfg(
-            proportion=0.5,               # 该地形占比 100%（只保留这一个）
-            noise_scale=[0.0, 0.1],       # 噪声幅度范围
-            noise_frequency=20,            # 噪声频率
-            fractal_octaves=2,             # 分形层数
-            fractal_lacunarity=2.0,        # 分形间隙
-            fractal_gain=0.25,             # 分形增益
-            centering=True,                # 噪声是否居中
-            wall_prob=[0.3, 0.3, 0.3, 0.3],  # 墙壁概率 [左, 右, 前, 后]
-            wall_height=5.0,              # 墙高度
-            wall_thickness=0.05,           # 墙厚度
+            proportion=1.0,
+            noise_scale=[0.0, 0.1],
+            noise_frequency=20,
+            fractal_octaves=2,
+            fractal_lacunarity=2.0,
+            fractal_gain=0.25,
+            centering=True,
+            wall_prob=[0.0, 0.0, 0.0, 0.0],
+            wall_height=5.0,
+            wall_thickness=0.05,
             flat_patch_sampling={
                 "target": FlatPatchSamplingCfg(
                     num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
@@ -161,12 +173,12 @@ MY_TERRAIN_CFG = FiledTerrainGeneratorCfg(
         # 地形2: 方形坑洞 - 中间有方形缺口的地形
         # ------------------------------------------------------------------
         "square_gaps": PerlinSquareGapTerrainCfg(
-            proportion=0.10,              # 该地形占比 10%
-            gap_distance_range=(0.1, 0.7), # 坑洞间距范围
-            gap_depth=(0.4, 0.6),         # 坑洞深度范围
-            platform_width=2.5,           # 平台宽度
-            border_width=1.0,             # 边界宽度
-            wall_prob=[0.3, 0.3, 0.3, 0.3],
+            proportion=1.0,
+            gap_distance_range=(0.1, 0.7),
+            gap_depth=(0.4, 0.6),
+            platform_width=2.5,
+            border_width=1.0,
+            wall_prob=[0.0, 0.0, 0.0, 0.0],
             wall_height=5.0,
             wall_thickness=0.05,
             flat_patch_sampling={
@@ -183,146 +195,407 @@ MY_TERRAIN_CFG = FiledTerrainGeneratorCfg(
         # ------------------------------------------------------------------
         # 地形3: 金字塔楼梯 - 向上走的楼梯
         # ------------------------------------------------------------------
-        # "pyramid_stairs": PerlinPyramidStairsTerrainCfg(
-        #     proportion=0.15,              # 该地形占比 15%
-        #     step_height_range=(0.05, 0.23),  # 台阶高度范围
-        #     step_width=0.3,              # 台阶宽度
-        #     platform_width=2.5,           # 平台宽度
-        #     border_width=1.0,
-        #     wall_prob=[0.3, 0.3, 0.3, 0.3],
-        #     wall_height=5.0,
-        #     wall_thickness=0.05,
-        #     perlin_cfg=PerlinPlaneTerrainCfg(  # 楼梯表面叠加 Perlin 噪声
-        #         noise_scale=0.05,
-        #         noise_frequency=20,
-        #         fractal_octaves=2,
-        #         fractal_lacunarity=2.0,
-        #         fractal_gain=0.25,
-        #         centering=True,
-        #     ),
-        #     flat_patch_sampling={
-        #         "target": FlatPatchSamplingCfg(
-        #             num_patches=50,
-        #             patch_radius=[0.05, 0.10, 0.15, 0.20],
-        #             max_height_diff=0.05,
-        #             x_range=(1.0, 3.0),
-        #             y_range=(-1.0, 1.0),
-        #         ),
-        #     },
-        # ),
+        "pyramid_stairs": PerlinPyramidStairsTerrainCfg(
+            proportion=1.0,
+            step_height_range=(0.05, 0.23),
+            step_width=0.3,
+            platform_width=2.5,
+            border_width=1.0,
+            wall_prob=[0.0, 0.0, 0.0, 0.0],
+            wall_height=5.0,
+            wall_thickness=0.05,
+            perlin_cfg=PerlinPlaneTerrainCfg(
+                noise_scale=0.05,
+                noise_frequency=20,
+                fractal_octaves=2,
+                fractal_lacunarity=2.0,
+                fractal_gain=0.25,
+                centering=True,
+            ),
+            flat_patch_sampling={
+                "target": FlatPatchSamplingCfg(
+                    num_patches=50,
+                    patch_radius=[0.05, 0.10, 0.15, 0.20],
+                    max_height_diff=0.05,
+                    x_range=(1.0, 3.0),
+                    y_range=(-1.0, 1.0),
+                ),
+            },
+        ),
 
         # ------------------------------------------------------------------
         # 地形4: 反向金字塔楼梯 - 向下走的楼梯（凹陷地形）
         # ------------------------------------------------------------------
-        # "pyramid_stairs_inv": PerlinInvertedPyramidStairsTerrainCfg(
-        #     proportion=0.15,
-        #     step_height_range=(0.05, 0.23),
-        #     step_width=0.3,
-        #     platform_width=2.5,
-        #     border_width=1.0,
-        #     wall_prob=[0.3, 0.3, 0.3, 0.3],
-        #     wall_height=5.0,
-        #     wall_thickness=0.05,
-        #     perlin_cfg=PerlinPlaneTerrainCfg(
-        #         noise_scale=0.05,
-        #         noise_frequency=20,
-        #         fractal_octaves=2,
-        #         fractal_lacunarity=2.0,
-        #         fractal_gain=0.25,
-        #         centering=True,
-        #     ),
-        #     flat_patch_sampling={
-        #         "target": FlatPatchSamplingCfg(
-        #             num_patches=50,
-        #             patch_radius=[0.05, 0.10, 0.15, 0.20],
-        #             max_height_diff=0.05,
-        #             x_range=(1.0, 3.0),
-        #             y_range=(-1.0, 1.0),
-        #         ),
-        #     },
-        # ),
+        "pyramid_stairs_inv": PerlinInvertedPyramidStairsTerrainCfg(
+            proportion=1.0,
+            step_height_range=(0.05, 0.23),
+            step_width=0.3,
+            platform_width=2.5,
+            border_width=1.0,
+            wall_prob=[0.0, 0.0, 0.0, 0.0],
+            wall_height=5.0,
+            wall_thickness=0.05,
+            perlin_cfg=PerlinPlaneTerrainCfg(
+                noise_scale=0.05,
+                noise_frequency=20,
+                fractal_octaves=2,
+                fractal_lacunarity=2.0,
+                fractal_gain=0.25,
+                centering=True,
+            ),
+            flat_patch_sampling={
+                "target": FlatPatchSamplingCfg(
+                    num_patches=50,
+                    patch_radius=[0.05, 0.10, 0.15, 0.20],
+                    max_height_diff=0.05,
+                    x_range=(1.0, 3.0),
+                    y_range=(-1.0, 1.0),
+                ),
+            },
+        ),
 
         # ------------------------------------------------------------------
         # 地形5: 离散障碍物 - 随机分布的方形障碍物
         # ------------------------------------------------------------------
-        # "boxes": PerlinDiscreteObstaclesTerrainCfg(
-        #     proportion=0.20,              # 该地形占比 20%
-        #     obstacle_height_range=(0.05, 0.40),  # 障碍物高度范围
-        #     obstacle_width_range=(0.1, 0.4),    # 障碍物宽度范围
-        #     num_obstacles=10,            # 障碍物数量
-        #     platform_width=2.5,
-        #     border_width=1.0,
-        #     wall_prob=[0.3, 0.3, 0.3, 0.3],
-        #     wall_height=5.0,
-        #     wall_thickness=0.05,
-        #     perlin_cfg=PerlinPlaneTerrainCfg(
-        #         noise_scale=0.02,
-        #         noise_frequency=20,
-        #         fractal_octaves=2,
-        #         fractal_lacunarity=2.0,
-        #         fractal_gain=0.25,
-        #         centering=True,
-        #     ),
-        #     flat_patch_sampling={
-        #         "target": FlatPatchSamplingCfg(
-        #             num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
-        #         ),
-        #     },
-        # ),
+        "boxes": PerlinDiscreteObstaclesTerrainCfg(
+            proportion=1.0,
+            obstacle_height_range=(0.05, 0.40),
+            obstacle_width_range=(0.1, 0.4),
+            num_obstacles=10,
+            platform_width=2.5,
+            border_width=1.0,
+            wall_prob=[0.0, 0.0, 0.0, 0.0],
+            wall_height=5.0,
+            wall_thickness=0.05,
+            perlin_cfg=PerlinPlaneTerrainCfg(
+                noise_scale=0.02,
+                noise_frequency=20,
+                fractal_octaves=2,
+                fractal_lacunarity=2.0,
+                fractal_gain=0.25,
+                centering=True,
+            ),
+            flat_patch_sampling={
+                "target": FlatPatchSamplingCfg(
+                    num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
+                ),
+            },
+        ),
 
         # ------------------------------------------------------------------
-        # 自定义地形1: 波浪地形 - 波纹状起伏地形
+        # 地形6: 波浪地形 - 波纹状起伏地形
         # ------------------------------------------------------------------
-        # "my_wave_terrain": PerlinWaveTerrainCfg(
-        #     proportion=0.05,              # 该地形占比 5%
-        #     amplitude_range=(0.1, 0.4),   # 波浪振幅范围（米）
-        #     num_waves=3,                  # 波浪数量
-        #     border_width=1.0,
-        #     wall_prob=[0.3, 0.3, 0.3, 0.3],
-        #     wall_height=5.0,
-        #     wall_thickness=0.05,
-        #     perlin_cfg=PerlinPlaneTerrainCfg(
-        #         noise_scale=0.02,
-        #         noise_frequency=20,
-        #         fractal_octaves=2,
-        #         fractal_lacunarity=2.0,
-        #         fractal_gain=0.25,
-        #         centering=True,
-        #     ),
-        #     flat_patch_sampling={
-        #         "target": FlatPatchSamplingCfg(
-        #             num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
-        #         ),
-        #     },
-        # ),
+        "wave_terrain": PerlinWaveTerrainCfg(
+            proportion=1.0,
+            amplitude_range=(0.1, 0.4),
+            num_waves=3,
+            border_width=1.0,
+            wall_prob=[0.0, 0.0, 0.0, 0.0],
+            wall_height=5.0,
+            wall_thickness=0.05,
+            perlin_cfg=PerlinPlaneTerrainCfg(
+                noise_scale=0.02,
+                noise_frequency=20,
+                fractal_octaves=2,
+                fractal_lacunarity=2.0,
+                fractal_gain=0.25,
+                centering=True,
+            ),
+            flat_patch_sampling={
+                "target": FlatPatchSamplingCfg(
+                    num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
+                ),
+            },
+        ),
 
         # ------------------------------------------------------------------
-        # 自定义地形2: 踏脚石 - 需要跳跃的分离石块
+        # 地形7: 踏脚石 - 需要跳跃的分离石块
         # ------------------------------------------------------------------
-        # "my_stepping_stones": PerlinSteppingStonesTerrainCfg(
-        #     proportion=0.05,              # 该地形占比 5%
-        #     stone_width_range=(0.2, 0.6), # 石头宽度范围（米）
-        #     stone_distance_range=(0.3, 0.8),  # 石头间距范围（米）
-        #     stone_height_max=0.15,        # 石头最大高度（米）
-        #     platform_width=0.8,           # 平台宽度
-        #     border_width=1.0,
-        #     wall_prob=[0.3, 0.3, 0.3, 0.3],
-        #     wall_height=5.0,
-        #     wall_thickness=0.05,
-        #     perlin_cfg=PerlinPlaneTerrainCfg(
-        #         noise_scale=0.01,
-        #         noise_frequency=20,
-        #         fractal_octaves=2,
-        #         fractal_lacunarity=2.0,
-        #         fractal_gain=0.25,
-        #         centering=True,
-        #     ),
-        #     flat_patch_sampling={
-        #         "target": FlatPatchSamplingCfg(
-        #             num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
-        #         ),
-        #     },
-        # ),
+        "stepping_stones": PerlinSteppingStonesTerrainCfg(
+            proportion=1.0,
+            stone_width_range=(0.2, 0.6),
+            stone_distance_range=(0.3, 0.8),
+            stone_height_max=0.15,
+            platform_width=0.8,
+            border_width=1.0,
+            wall_prob=[0.0, 0.0, 0.0, 0.0],
+            wall_height=5.0,
+            wall_thickness=0.05,
+            perlin_cfg=PerlinPlaneTerrainCfg(
+                noise_scale=0.01,
+                noise_frequency=20,
+                fractal_octaves=2,
+                fractal_lacunarity=2.0,
+                fractal_gain=0.25,
+                centering=True,
+            ),
+            flat_patch_sampling={
+                "target": FlatPatchSamplingCfg(
+                    num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
+                ),
+            },
+        ),
+
+        # ------------------------------------------------------------------
+        # 地形8: 金字塔斜坡 - 向上倾斜的地形
+        # ------------------------------------------------------------------
+        "pyramid_sloped": PerlinPyramidSlopedTerrainCfg(
+            proportion=1.0,
+            slope_height_range=(0.1, 0.5),
+            platform_width=2.5,
+            border_width=1.0,
+            wall_prob=[0.0, 0.0, 0.0, 0.0],
+            wall_height=5.0,
+            wall_thickness=0.05,
+            perlin_cfg=PerlinPlaneTerrainCfg(
+                noise_scale=0.05,
+                noise_frequency=20,
+                fractal_octaves=2,
+                fractal_lacunarity=2.0,
+                fractal_gain=0.25,
+                centering=True,
+            ),
+            flat_patch_sampling={
+                "target": FlatPatchSamplingCfg(
+                    num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
+                ),
+            },
+        ),
+
+        # ==================================================================
+        #  instinctlab 新增地形（9种）
+        # ==================================================================
+
+        # ------------------------------------------------------------------
+        # 地形9: 矮墙/栏杆 - 用于跳跃和跨栏
+        # ------------------------------------------------------------------
+        "parapet": PerlinParapetTerrainCfg(
+            proportion=1.0,
+            parapet_height=(0.1, 0.3),
+            parapet_length=(0.1, 0.3),
+            parapet_width=None,
+            curved_top_rate=None,
+            border_width=1.0,
+            wall_prob=[0.0, 0.0, 0.0, 0.0],
+            wall_height=5.0,
+            wall_thickness=0.05,
+            perlin_cfg=PerlinPlaneTerrainCfg(
+                noise_scale=0.02,
+                noise_frequency=20,
+                fractal_octaves=2,
+                fractal_lacunarity=2.0,
+                fractal_gain=0.25,
+                centering=True,
+            ),
+            flat_patch_sampling={
+                "target": FlatPatchSamplingCfg(
+                    num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
+                ),
+            },
+        ),
+
+        # ------------------------------------------------------------------
+        # 地形10: 沟渠/排水沟 - 两侧有沟的地形
+        # ------------------------------------------------------------------
+        "gutter": PerlinGutterTerrainCfg(
+            proportion=1.0,
+            gutter_length=(0.5, 1.5),
+            gutter_depth=(0.1, 0.3),
+            gutter_width=None,
+            border_width=1.0,
+            wall_prob=[0.0, 0.0, 0.0, 0.0],
+            wall_height=5.0,
+            wall_thickness=0.05,
+            perlin_cfg=PerlinPlaneTerrainCfg(
+                noise_scale=0.02,
+                noise_frequency=20,
+                fractal_octaves=2,
+                fractal_lacunarity=2.0,
+                fractal_gain=0.25,
+                centering=True,
+            ),
+            flat_patch_sampling={
+                "target": FlatPatchSamplingCfg(
+                    num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
+                ),
+            },
+        ),
+
+        # ------------------------------------------------------------------
+        # 地形11: 楼梯先上后下 - 先上坡再下坡
+        # ------------------------------------------------------------------
+        "stairs_up_down": PerlinStairsUpDownTerrainCfg(
+            proportion=1.0,
+            per_step_height=(0.05, 0.15),
+            per_step_width=None,
+            per_step_length=(0.3, 0.5),
+            num_steps=(3, 6),
+            platform_length=1.0,
+            border_width=1.0,
+            wall_prob=[0.0, 0.0, 0.0, 0.0],
+            wall_height=5.0,
+            wall_thickness=0.05,
+            perlin_cfg=PerlinPlaneTerrainCfg(
+                noise_scale=0.02,
+                noise_frequency=20,
+                fractal_octaves=2,
+                fractal_lacunarity=2.0,
+                fractal_gain=0.25,
+                centering=True,
+            ),
+            flat_patch_sampling={
+                "target": FlatPatchSamplingCfg(
+                    num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
+                ),
+            },
+        ),
+
+        # ------------------------------------------------------------------
+        # 地形12: 楼梯先下后上 - 先下坡再上坡
+        # ------------------------------------------------------------------
+        "stairs_down_up": PerlinStairsDownUpTerrainCfg(
+            proportion=1.0,
+            per_step_height=(0.05, 0.15),
+            per_step_width=None,
+            per_step_length=(0.3, 0.5),
+            num_steps=(3, 6),
+            platform_length=1.0,
+            border_width=1.0,
+            wall_prob=[0.0, 0.0, 0.0, 0.0],
+            wall_height=5.0,
+            wall_thickness=0.05,
+            perlin_cfg=PerlinPlaneTerrainCfg(
+                noise_scale=0.02,
+                noise_frequency=20,
+                fractal_octaves=2,
+                fractal_lacunarity=2.0,
+                fractal_gain=0.25,
+                centering=True,
+            ),
+            flat_patch_sampling={
+                "target": FlatPatchSamplingCfg(
+                    num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
+                ),
+            },
+        ),
+
+        # ------------------------------------------------------------------
+        # 地形13: 倾斜墙壁 - 有倾斜墙壁需要绕过的地形
+        # ------------------------------------------------------------------
+        "tilt": PerlinTiltTerrainCfg(
+            proportion=1.0,
+            wall_height=(0.2, 0.5),
+            wall_width=None,
+            wall_length=(0.3, 0.6),
+            wall_opening_angle=(20.0, 45.0),
+            wall_opening_width=(0.5, 1.0),
+            border_width=1.0,
+            wall_prob=[0.0, 0.0, 0.0, 0.0],
+            wall_thickness=0.05,
+            perlin_cfg=PerlinPlaneTerrainCfg(
+                noise_scale=0.02,
+                noise_frequency=20,
+                fractal_octaves=2,
+                fractal_lacunarity=2.0,
+                fractal_gain=0.25,
+                centering=True,
+            ),
+            flat_patch_sampling={
+                "target": FlatPatchSamplingCfg(
+                    num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
+                ),
+            },
+        ),
+
+        # ------------------------------------------------------------------
+        # 地形14: 倾斜斜面 - 可切换方向的斜面
+        # ------------------------------------------------------------------
+        "tilted_ramp": PerlinTiltedRampTerrainCfg(
+            proportion=1.0,
+            tilt_angle=(15.0, 30.0),
+            tilt_height=(0.2, 0.4),
+            tilt_width=(0.5, 1.0),
+            tilt_length=(1.0, 2.0),
+            switch_spacing=(1.0, 2.0),
+            spacing_curriculum=True,
+            overlap_size=None,
+            border_width=1.0,
+            wall_prob=[0.0, 0.0, 0.0, 0.0],
+            wall_height=5.0,
+            wall_thickness=0.05,
+            perlin_cfg=PerlinPlaneTerrainCfg(
+                noise_scale=0.02,
+                noise_frequency=20,
+                fractal_octaves=2,
+                fractal_lacunarity=2.0,
+                fractal_gain=0.25,
+                centering=True,
+            ),
+            flat_patch_sampling={
+                "target": FlatPatchSamplingCfg(
+                    num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
+                ),
+            },
+        ),
+
+        # ------------------------------------------------------------------
+        # 地形15: 坡道地形 - 上下坡中间有平地
+        # ------------------------------------------------------------------
+        "slope": PerlinSlopeTerrainCfg(
+            proportion=1.0,
+            slope_angle=(15.0, 30.0),
+            per_slope_length=(1.0, 2.0),
+            platform_length=1.0,
+            slope_width=None,
+            up_down=True,
+            border_width=1.0,
+            wall_prob=[0.0, 0.0, 0.0, 0.0],
+            wall_height=5.0,
+            wall_thickness=0.05,
+            perlin_cfg=PerlinPlaneTerrainCfg(
+                noise_scale=0.02,
+                noise_frequency=20,
+                fractal_octaves=2,
+                fractal_lacunarity=2.0,
+                fractal_gain=0.25,
+                centering=True,
+            ),
+            flat_patch_sampling={
+                "target": FlatPatchSamplingCfg(
+                    num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
+                ),
+            },
+        ),
+
+        # ------------------------------------------------------------------
+        # 地形16: 十字石 - 十字形排列的石块
+        # ------------------------------------------------------------------
+        "cross_stone": PerlinCrossStoneTerrainCfg(
+            proportion=1.0,
+            stone_size=(0.2, 0.5),
+            stone_height=(0.1, 0.3),
+            stone_spacing=(0.3, 0.6),
+            ground_depth=-0.5,
+            platform_width=1.5,
+            xy_random_ratio=0.2,
+            border_width=1.0,
+            wall_prob=[0.0, 0.0, 0.0, 0.0],
+            wall_height=5.0,
+            wall_thickness=0.05,
+            perlin_cfg=PerlinPlaneTerrainCfg(
+                noise_scale=0.02,
+                noise_frequency=20,
+                fractal_octaves=2,
+                fractal_lacunarity=2.0,
+                fractal_gain=0.25,
+                centering=True,
+            ),
+            flat_patch_sampling={
+                "target": FlatPatchSamplingCfg(
+                    num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
+                ),
+            },
+        ),
     }),
 )
 
