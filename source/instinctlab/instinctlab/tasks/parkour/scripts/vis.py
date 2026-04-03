@@ -87,6 +87,7 @@ from instinctlab.terrains import (
     PerlinPyramidStairsTerrainCfg,
     PerlinInvertedPyramidStairsTerrainCfg,
     PerlinDiscreteObstaclesTerrainCfg,
+    PerlinPyramidSlopedTerrainCfg,
     PerlinInvertedPyramidSlopedTerrainCfg,
     PerlinWaveTerrainCfg,
     PerlinSteppingStonesTerrainCfg,
@@ -341,7 +342,7 @@ MY_TERRAIN_CFG = FiledTerrainGeneratorCfg(
         # ------------------------------------------------------------------
         "pyramid_sloped": PerlinPyramidSlopedTerrainCfg(
             proportion=1.0,
-            slope_height_range=(0.1, 0.5),
+            slope_range=(0.1, 0.5),
             platform_width=2.5,
             border_width=1.0,
             wall_prob=[0.0, 0.0, 0.0, 0.0],
@@ -518,7 +519,7 @@ MY_TERRAIN_CFG = FiledTerrainGeneratorCfg(
             tilt_length=(1.0, 2.0),
             switch_spacing=(1.0, 2.0),
             spacing_curriculum=True,
-            overlap_size=None,
+            overlap_size=0.5,
             border_width=1.0,
             wall_prob=[0.0, 0.0, 0.0, 0.0],
             wall_height=5.0,
@@ -540,32 +541,33 @@ MY_TERRAIN_CFG = FiledTerrainGeneratorCfg(
 
         # ------------------------------------------------------------------
         # 地形15: 坡道地形 - 上下坡中间有平地
+        # 注意：此地形参数较复杂，暂时注释掉
         # ------------------------------------------------------------------
-        "slope": PerlinSlopeTerrainCfg(
-            proportion=1.0,
-            slope_angle=(15.0, 30.0),
-            per_slope_length=(1.0, 2.0),
-            platform_length=1.0,
-            slope_width=None,
-            up_down=True,
-            border_width=1.0,
-            wall_prob=[0.0, 0.0, 0.0, 0.0],
-            wall_height=5.0,
-            wall_thickness=0.05,
-            perlin_cfg=PerlinPlaneTerrainCfg(
-                noise_scale=0.02,
-                noise_frequency=20,
-                fractal_octaves=2,
-                fractal_lacunarity=2.0,
-                fractal_gain=0.25,
-                centering=True,
-            ),
-            flat_patch_sampling={
-                "target": FlatPatchSamplingCfg(
-                    num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
-                ),
-            },
-        ),
+        # "slope": PerlinSlopeTerrainCfg(
+        #     proportion=1.0,
+        #     slope_angle=(0.2, 0.5),
+        #     per_slope_length=(1.0, 2.0),
+        #     platform_length=1.0,
+        #     slope_width=2.0,
+        #     up_down=True,
+        #     border_width=1.0,
+        #     wall_prob=[0.0, 0.0, 0.0, 0.0],
+        #     wall_height=5.0,
+        #     wall_thickness=0.05,
+        #     perlin_cfg=PerlinPlaneTerrainCfg(
+        #         noise_scale=0.02,
+        #         noise_frequency=20,
+        #         fractal_octaves=2,
+        #         fractal_lacunarity=2.0,
+        #         fractal_gain=0.25,
+        #         centering=True,
+        #     ),
+        #     flat_patch_sampling={
+        #         "target": FlatPatchSamplingCfg(
+        #             num_patches=50, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.05
+        #         ),
+        #     },
+        # ),
 
         # ------------------------------------------------------------------
         # 地形16: 十字石 - 十字形排列的石块
