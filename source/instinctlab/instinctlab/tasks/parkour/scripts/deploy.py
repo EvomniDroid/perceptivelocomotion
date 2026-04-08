@@ -4,8 +4,7 @@ import argparse
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../../../../scripts/instinct_rl"))
-import cli_args
+from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser(description="部署RL智能体，包含摔倒率分类器和运动规划器")
 parser.add_argument("--task", type=str, default=None, help="任务名称")
@@ -14,10 +13,13 @@ parser.add_argument("--classifier_model", type=str, default=None, help="摔倒�
 parser.add_argument("--save_depth_interval", type=int, default=0, help="每N步保存一次深度图，0表示禁用")
 parser.add_argument("--fall_rate_threshold", type=float, default=0.5, help="切换到安全模式的摔倒率阈值")
 parser.add_argument("--use_vis_terrain", action="store_true", default=False, help="使用vis.py的地形配置进行泛化测试")
+parser.add_argument("--vel_debug", action="store_true", default=False, help="启用速度调试模式，使用直接速度指令替代RL策略")
+parser.add_argument("--vel", type=str, default="0.5,0.0,0.0", help="调试模式速度向量: vel_x,vel_y,ang_z (逗号分隔，默认0.5,0.0,0.0)")
 
+sys.path.append(os.path.join(os.getcwd(), "scripts", "instinct_rl"))
+import cli_args
 cli_args.add_instinct_rl_args(parser)
 
-from isaaclab.app import AppLauncher
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
@@ -27,6 +29,7 @@ if getattr(args_cli, 'video', False):
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
+from instinct_rl.utils.utils import get_obs_slice
 import gymnasium as gym
 import torch
 import numpy as np
@@ -110,26 +113,29 @@ class FallRateClassifier:
 class MotionPlanner:
     """运动规划器接口 - 根据摔倒率和地形类型调整动作"""
 
-    def __init__(self, cfg=None):
+    def __init__(self, cfg=None, vel_debug=False, debug_vels=None):
         self.cfg = cfg or {}
         self.safe_mode_lin_vel_scale = self.cfg.get("safe_mode_lin_vel_scale", 0.5)
         self.safe_mode_step_width = self.cfg.get("safe_mode_step_width", 0.5)
+        self.vel_debug = vel_debug
+        self.debug_vels = debug_vels or {}
 
-    def get_action(self, obs, fall_rate, terrain_type, policy_fn=None):
-        if policy_fn is None:
-            return np.zeros(12, dtype=np.float32), "no_policy"
+    def get_action(self, obs, fall_rate, terrain_type, command_obs_slice, vel_debug=False):
+        if vel_debug:
+            obs = self._inject_debug_velocity(obs, command_obs_slice)
+            return obs
 
-        base_action = policy_fn(obs)
+        return obs
 
-        mode = "normal"
-        if fall_rate > 0.7:
-            mode = "safe"
-            base_action[:3] *= self.safe_mode_lin_vel_scale
-        elif fall_rate > 0.4:
-            mode = "cautious"
-            base_action[:3] *= 0.75
-
-        return base_action, mode
+    def _inject_debug_velocity(self, obs, command_obs_slice):
+        obs = obs.clone()
+        vel_x = self.debug_vels.get("vel_x", 0.5)
+        vel_y = self.debug_vels.get("vel_y", 0.0)
+        ang_z = self.debug_vels.get("ang_z", 0.0)
+        debug_cmd = torch.tensor([[vel_x, vel_y, ang_z]], device=obs.device)
+        debug_cmd_repeated = debug_cmd.repeat(1, command_obs_slice[1][0] // 3)
+        obs[:, command_obs_slice[0]] = debug_cmd_repeated
+        return obs
 
 
 def main():
@@ -180,11 +186,18 @@ def main():
 
     env = InstinctRlVecEnvWrapper(env)
 
-    ppo_runner = OnPolicyRunner(env, agent_cfg_dict, log_dir=None, device=agent_cfg.device)
-    if agent_cfg.load_run is not None:
-        print(f"[INFO] 加载RL策略: {resume_path}")
-        ppo_runner.load(resume_path)
-
+    ppo_runner = None
+    if getattr(args_cli, 'vel_debug', False):
+        print("[INFO] vel_debug模式：加载RL策略用于关节控制，只覆盖velocity_commands")
+        ppo_runner = OnPolicyRunner(env, agent_cfg_dict, log_dir=None, device=agent_cfg.device)
+        if agent_cfg.load_run is not None:
+            print(f"[INFO] 加载RL策略: {resume_path}")
+            ppo_runner.load(resume_path)
+    else:
+        ppo_runner = OnPolicyRunner(env, agent_cfg_dict, log_dir=None, device=agent_cfg.device)
+        if agent_cfg.load_run is not None:
+            print(f"[INFO] 加载RL策略: {resume_path}")
+            ppo_runner.load(resume_path)
     policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
 
     print(f"\n[INFO] 加载摔倒率分类器: {args_cli.classifier_model}")
@@ -194,7 +207,20 @@ def main():
         classifier = None
         print("[INFO] 未提供分类器模型，跳过分类器初始化")
 
-    planner = MotionPlanner(cfg={"safe_mode_lin_vel_scale": 0.5})
+    vel_str = getattr(args_cli, 'vel', '0.5,0.0,0.0')
+    vel_parts = [float(x) for x in vel_str.split(',')]
+    debug_vels = {
+        "vel_x": vel_parts[0] if len(vel_parts) > 0 else 0.5,
+        "vel_y": vel_parts[1] if len(vel_parts) > 1 else 0.0,
+        "ang_z": vel_parts[2] if len(vel_parts) > 2 else 0.0,
+    }
+    planner = MotionPlanner(
+        cfg={"safe_mode_lin_vel_scale": 0.5},
+        vel_debug=getattr(args_cli, 'vel_debug', False),
+        debug_vels=debug_vels
+    )
+
+    command_obs_slice = get_obs_slice(env.get_obs_segments(), "velocity_commands")
 
     run_id = np.random.randint(10000)
     save_depth_dir = None
@@ -220,12 +246,13 @@ def main():
                 fall_rate = 0.0
                 terrain_name = "unknown"
 
-            action, mode = planner.get_action(obs, fall_rate, terrain_name, policy_fn=policy)
+            obs = planner.get_action(obs, fall_rate, terrain_name, command_obs_slice, vel_debug=getattr(args_cli, 'vel_debug', False))
 
             if timestep % 100 == 0:
-                print(f"[t={timestep}] 运行中 | 模式: {mode} | 地形: {terrain_name} | 摔倒率: {fall_rate:.3f}")
+                print(f"[t={timestep}] 运行中 | 模式: vel_debug | 地形: {terrain_name} | 摔倒率: {fall_rate:.3f}")
 
-            obs, _, _, _ = env.step(action)
+            actions = policy(obs)
+            obs, _, _, _ = env.step(actions)
             timestep += 1
 
     except KeyboardInterrupt:
