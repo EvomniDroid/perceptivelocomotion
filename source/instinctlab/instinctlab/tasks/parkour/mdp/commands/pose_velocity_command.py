@@ -85,22 +85,25 @@ class PoseVelocityCommand(CommandTerm):
             sub_indices = np.array(sub_indices, dtype=np.int32)
             sub_terrains_names = list(terrain_generator_cfg.sub_terrains.keys())
             for key, value in self.cfg.velocity_ranges.items():
-                if key in sub_terrains_names:
-                    terrain_type_index = sub_terrains_names.index(key)
-                    type_indices = np.where(sub_indices == terrain_type_index)[0]
-                    for type_indice in type_indices:
-                        env_indices = torch.where(self.terrain.terrain_types == type_indice)[0]
-                        self.lin_vel_x_range[env_indices, 0] = value["lin_vel_x"][0]
-                        self.lin_vel_x_range[env_indices, 1] = value["lin_vel_x"][1]
-                        self.lin_vel_y_range[env_indices, 0] = value["lin_vel_y"][0]
-                        self.lin_vel_y_range[env_indices, 1] = value["lin_vel_y"][1]
-                        self.ang_vel_z_range[env_indices, 0] = value["ang_vel_z"][0]
-                        self.ang_vel_z_range[env_indices, 1] = value["ang_vel_z"][1]
-                else:
-                    raise RuntimeError(f"Terrain type {key} not found in the terrain generator sub-terrain names.")
+                if key not in sub_terrains_names:
+                    print(f"[WARNING] Terrain type '{key}' not found in terrain generator, skipping velocity range setting.")
+                    continue
+                terrain_type_index = sub_terrains_names.index(key)
+                type_indices = np.where(sub_indices == terrain_type_index)[0]
+                for type_indice in type_indices:
+                    env_indices = torch.where(self.terrain.terrain_types == type_indice)[0]
+                    self.lin_vel_x_range[env_indices, 0] = value["lin_vel_x"][0]
+                    self.lin_vel_x_range[env_indices, 1] = value["lin_vel_x"][1]
+                    self.lin_vel_y_range[env_indices, 0] = value["lin_vel_y"][0]
+                    self.lin_vel_y_range[env_indices, 1] = value["lin_vel_y"][1]
+                    self.ang_vel_z_range[env_indices, 0] = value["ang_vel_z"][0]
+                    self.ang_vel_z_range[env_indices, 1] = value["ang_vel_z"][1]
 
             if self.cfg.random_velocity_terrain is not None:
                 for key in self.cfg.random_velocity_terrain:
+                    if key not in sub_terrains_names:
+                        print(f"[WARNING] Terrain type '{key}' not found in terrain generator, skipping random velocity setting.")
+                        continue
                     terrain_type_index = sub_terrains_names.index(key)
                     type_indices = np.where(sub_indices == terrain_type_index)[0]
                     for type_indice in type_indices:
