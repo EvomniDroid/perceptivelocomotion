@@ -28,6 +28,7 @@ parser.add_argument("--video_start_step", type=int, default=0, help="仿真开�
 parser.add_argument("--useonnx", action="store_true", default=False, help="使用ONNX模型进行推理")
 parser.add_argument("--exportonnx", action="store_true", default=False, help="导出策略为ONNX模型")
 parser.add_argument("--debug", action="store_true", default=False, help="启用调试模式")
+parser.add_argument("--use_vis_terrain", action="store_true", default=False, help="使用vis.py的地形配置进行泛化测试")
 
 cli_args.add_instinct_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
@@ -53,6 +54,7 @@ from isaaclab.utils.io import load_yaml
 from isaaclab_tasks.utils import get_checkpoint_path, parse_env_cfg
 from instinctlab.utils.wrappers import InstinctRlVecEnvWrapper
 from instinctlab.utils.wrappers.instinct_rl import InstinctRlOnPolicyRunnerCfg
+from instinctlab.terrains.shared_terrain_cfg import MY_TERRAIN_CFG
 
 import sys
 sys.path.append("/home/zh/isaac/liveratemodel")
@@ -204,6 +206,14 @@ def main():
         num_envs=args_cli.num_envs,
         use_fabric=not args_cli.disable_fabric
     )
+
+    # 如果启用泛化测试模式，使用vis.py的地形配置
+    if args_cli.use_vis_terrain:
+        print("[INFO] 使用vis地形配置进行泛化测试 (MY_TERRAIN_CFG)")
+        env_cfg.terrain.terrain_generator = MY_TERRAIN_CFG
+        env_cfg.terrain.curriculum = False
+    else:
+        print("[INFO] 使用训练地形配置 (ROUGH_TERRAINS_CFG)")
 
     # 解析智能体配置
     agent_cfg: InstinctRlOnPolicyRunnerCfg = cli_args.parse_instinct_rl_cfg(args_cli.task, args_cli)
