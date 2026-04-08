@@ -38,6 +38,7 @@ import isaaclab.sim as sim_utils
 from instinctlab.terrains.terrain_importer import TerrainImporter
 from instinctlab.terrains.terrain_importer_cfg import TerrainImporterCfg
 from instinctlab.terrains.shared_terrain_cfg import MY_TERRAIN_CFG
+from instinctlab.terrains.virtual_obstacle.edge_cylinder_cfg import GreedyconcatEdgeCylinderCfg
 
 
 # ========================================================================
