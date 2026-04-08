@@ -54,6 +54,8 @@ class FallRateClassifier:
         config = checkpoint.get("config", {})
 
         self.input_mode = config.get("input_mode", "depth_gradients")
+        self.use_resnet = config.get("use_resnet", False)
+        self.use_pointnet = config.get("use_pointnet", False) or self.input_mode == "point_cloud"
         self.patch_size = config.get("patch_size", 32)
         self.point_count = config.get("point_count", 1024)
         self.focal_length = config.get("focal_length", 24.0)
@@ -63,14 +65,12 @@ class FallRateClassifier:
         in_channels = get_input_channels(self.input_mode)
         self.model = create_model(
             model_type="classifier",
-            input_channels=in_channels,
-            num_classes=len(LABEL_TO_FALL_RATE),
-            input_mode=self.input_mode,
-            patch_size=self.patch_size,
-            point_count=self.point_count,
-            focal_length=self.focal_length,
-            horizontal_aperture=self.horizontal_aperture,
-            vertical_aperture=self.vertical_aperture,
+            num_classes=10,
+            device=self.device,
+            use_resnet=self.use_resnet,
+            use_pointnet=self.use_pointnet,
+            pretrained=False,
+            in_channels=in_channels,
         )
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.model.to(device)
@@ -78,14 +78,22 @@ class FallRateClassifier:
 
     @torch.no_grad()
     def predict(self, depth_array):
+        depth_max = float(depth_array.max())
+        depth_scale = depth_max if depth_max > 1.0 else 1.0
+
+        if self.input_mode != "point_cloud":
+            img = Image.fromarray(depth_array).convert("L")
+            img = img.resize((self.patch_size, self.patch_size), Image.BILINEAR)
+            depth_array = np.array(img)
+
         model_input = build_model_input_from_depth_array(
             depth_array,
-            self.input_mode,
-            self.patch_size,
-            self.point_count,
-            self.focal_length,
-            self.horizontal_aperture,
-            self.vertical_aperture,
+            input_mode=self.input_mode,
+            depth_scale=depth_scale,
+            point_count=self.point_count,
+            focal_length=self.focal_length,
+            horizontal_aperture=self.horizontal_aperture,
+            vertical_aperture=self.vertical_aperture,
         )
         model_input = model_input.to(self.device)
 
@@ -138,8 +146,8 @@ def main():
 
     if getattr(args_cli, 'use_vis_terrain', False):
         print("[INFO] 使用vis地形配置进行泛化测试 (MY_TERRAIN_CFG)")
-        env_cfg.terrain.terrain_generator = MY_TERRAIN_CFG
-        env_cfg.terrain.curriculum = False
+        env_cfg.scene.terrain.terrain_generator = MY_TERRAIN_CFG
+        env_cfg.scene.terrain.curriculum = False
     else:
         print("[INFO] 使用训练地形配置 (ROUGH_TERRAINS_CFG)")
 
@@ -208,17 +216,14 @@ def main():
 
             if classifier is not None and depth_np is not None:
                 fall_rate, label, terrain_name = classifier.predict(depth_np)
-                if timestep % 100 == 0:
-                    print(f"[t={timestep}] 地形: {terrain_name}, 摔倒率: {fall_rate:.3f}")
             else:
                 fall_rate = 0.0
                 terrain_name = "unknown"
 
             action, mode = planner.get_action(obs, fall_rate, terrain_name, policy_fn=policy)
 
-            if depth_np is not None and getattr(args_cli, 'save_depth_interval', 0) > 0 and timestep % getattr(args_cli, 'save_depth_interval', 0) == 0:
-                img_path = os.path.join(save_depth_dir, f"step_{timestep:06d}_fall{fall_rate:.2f}_{terrain_name}.png")
-                Image.fromarray((depth_np * 255).astype(np.uint8)).save(img_path)
+            if timestep % 100 == 0:
+                print(f"[t={timestep}] 运行中 | 模式: {mode} | 地形: {terrain_name} | 摔倒率: {fall_rate:.3f}")
 
             obs, _, _, _ = env.step(action)
             timestep += 1
