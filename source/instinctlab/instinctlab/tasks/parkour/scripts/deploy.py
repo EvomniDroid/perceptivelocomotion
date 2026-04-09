@@ -18,6 +18,7 @@ parser.add_argument("--vel", type=str, default="0.5,0.0,0.0", help="调试模式
 parser.add_argument("--keyboard_control", action="store_true", default=False, help="启用键盘控制速度 (WASD)")
 parser.add_argument("--keyboard_linvel_step", type=float, default=0.5, help="键盘每次调整的速度增量")
 parser.add_argument("--keyboard_angvel", type=float, default=1.0, help="键盘控制的角速度大小")
+parser.add_argument("--termination_mode", type=str, default="full", help="终止模式: full=全部检查, time_only=仅超时, none=不禁用")
 
 sys.path.append(os.path.join(os.getcwd(), "scripts", "instinct_rl"))
 import cli_args
@@ -166,8 +167,25 @@ def main():
         print("[INFO] 使用vis地形配置进行泛化测试 (MY_TERRAIN_CFG)")
         env_cfg.scene.terrain.terrain_generator = MY_TERRAIN_CFG
         env_cfg.scene.terrain.curriculum = False
+
+    term_mode = getattr(args_cli, 'termination_mode', 'full')
+    if term_mode == "none":
+        env_cfg.terminations.time_out = None
+        env_cfg.terminations.terrain_out_bound = None
+        env_cfg.terminations.base_contact = None
+        env_cfg.terminations.bad_orientation = None
+        env_cfg.terminations.root_height = None
+        env_cfg.terminations.dataset_exhausted = None
+        print("[INFO] termination_mode=none: 禁用所有终止检测")
+    elif term_mode == "time_only":
+        env_cfg.terminations.terrain_out_bound = None
+        env_cfg.terminations.base_contact = None
+        env_cfg.terminations.bad_orientation = None
+        env_cfg.terminations.root_height = None
+        env_cfg.terminations.dataset_exhausted = None
+        print("[INFO] termination_mode=time_only: 仅保留超时终止")
     else:
-        print("[INFO] 使用训练地形配置 (ROUGH_TERRAINS_CFG)")
+        print("[INFO] termination_mode=full: 使用全部终止检测")
 
     agent_cfg: InstinctRlOnPolicyRunnerCfg = cli_args.parse_instinct_rl_cfg(args_cli.task, args_cli)
 
@@ -262,10 +280,18 @@ def main():
                 if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
                     keyboard_command[:, 2] = keyboard_angvel
                     print(f"[键盘] A: 左转 ang_z = {keyboard_angvel}")
+            if e.input == carb.input.KeyboardInput.Q:
+                if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
+                    keyboard_command[:, 2] = 0.0
+                    print(f"[键盘] Q: 停止转向")
             if e.input == carb.input.KeyboardInput.D:
                 if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
                     keyboard_command[:, 2] = -keyboard_angvel
                     print(f"[键盘] D: 右转 ang_z = {-keyboard_angvel}")
+            if e.input == carb.input.KeyboardInput.E:
+                if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
+                    keyboard_command[:, 2] = 0.0
+                    print(f"[键盘] E: 停止转向")
             if e.input == carb.input.KeyboardInput.X:
                 if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
                     keyboard_command[:] = 0.0
