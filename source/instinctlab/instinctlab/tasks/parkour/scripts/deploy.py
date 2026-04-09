@@ -130,22 +130,30 @@ class MotionPlanner:
         self.debug_vels = debug_vels or {}
 
     def get_action(self, obs, fall_rate, terrain_type, command_obs_slice, vel_debug=False, keyboard_command=None):
-        if vel_debug:
-            obs = self._inject_debug_velocity(obs, command_obs_slice, keyboard_command)
+        if not vel_debug:
             return obs
 
+        vel_x, vel_y, ang_z = self._get_blended_velocity(keyboard_command)
+        obs = self._inject_velocity(obs, command_obs_slice, vel_x, vel_y, ang_z)
         return obs
 
-    def _inject_debug_velocity(self, obs, command_obs_slice, keyboard_command=None):
-        obs = obs.clone()
+    def _get_blended_velocity(self, keyboard_command):
+        """混合速度选择：键盘优先，无键盘输入则用默认规划（一直往前）"""
         if keyboard_command is not None:
-            vel_x = keyboard_command[0, 0].item()
-            vel_y = keyboard_command[0, 1].item()
-            ang_z = keyboard_command[0, 2].item()
-        else:
-            vel_x = self.debug_vels.get("vel_x", 0.5)
-            vel_y = self.debug_vels.get("vel_y", 0.0)
-            ang_z = self.debug_vels.get("ang_z", 0.0)
+            kx = keyboard_command[0, 0].item()
+            ky = keyboard_command[0, 1].item()
+            kz = keyboard_command[0, 2].item()
+            if abs(kx) > 0.01 or abs(ky) > 0.01 or abs(kz) > 0.01:
+                print(f"[规划] 键盘接管: vel_x={kx:.2f}, vel_y={ky:.2f}, ang_z={kz:.2f}")
+                return kx, ky, kz
+
+        vel_x = self.debug_vels.get("vel_x", 0.5)
+        vel_y = self.debug_vels.get("vel_y", 0.0)
+        ang_z = self.debug_vels.get("ang_z", 0.0)
+        return vel_x, vel_y, ang_z
+
+    def _inject_velocity(self, obs, command_obs_slice, vel_x, vel_y, ang_z):
+        obs = obs.clone()
         debug_cmd = torch.tensor([[vel_x, vel_y, ang_z]], device=obs.device)
         debug_cmd_repeated = debug_cmd.repeat(1, command_obs_slice[1][0] // 3)
         obs[:, command_obs_slice[0]] = debug_cmd_repeated
