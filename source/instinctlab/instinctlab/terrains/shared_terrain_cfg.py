@@ -280,7 +280,7 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         parapet_width=None,
         curved_top_rate=None,
         border_width=1.0,
-        wall_prob=[1, 0.0, 0.0, 0.0],
+        wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
         wall_thickness=0.05,
         perlin_cfg=PerlinPlaneTerrainCfg(
@@ -471,7 +471,7 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
 # ====================================================================
 # vis.py 用的地形配置 - 用于可视化
 # ====================================================================
-# MY_TERRAIN_CFG 用于 vis.py，显示所有16种地形
+# MY_TERRAIN_CFG 用于 vis.py，显示选择的6种地形
 
 MY_TERRAIN_CFG = FiledTerrainGeneratorCfg(
     class_type=FiledTerrainGenerator,
@@ -485,7 +485,14 @@ MY_TERRAIN_CFG = FiledTerrainGeneratorCfg(
     slope_threshold=1.0,
     use_cache=False,
     curriculum=False,
-    sub_terrains=SHARED_SUB_TERRAINS,
+    sub_terrains={
+        "perlin_rough": SHARED_SUB_TERRAINS["perlin_rough"],
+        # "pyramid_slope": SHARED_SUB_TERRAINS["pyramid_slope"],
+        # "pyramid_slope_inv": SHARED_SUB_TERRAINS["pyramid_slope_inv"],
+        # "pyramid_stairs": SHARED_SUB_TERRAINS["pyramid_stairs"],
+        # "pyramid_stairs_inv": SHARED_SUB_TERRAINS["pyramid_stairs_inv"],
+        "discrete_obstacles": SHARED_SUB_TERRAINS["discrete_obstacles"],
+    },
 )
 
 
