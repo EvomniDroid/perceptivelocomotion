@@ -18,7 +18,8 @@ parser.add_argument("--vel", type=str, default="0.5,0.0,0.0", help="调试模式
 parser.add_argument("--keyboard_control", action="store_true", default=False, help="启用键盘控制速度 (WASD)")
 parser.add_argument("--keyboard_linvel_step", type=float, default=0.5, help="键盘每次调整的速度增量")
 parser.add_argument("--keyboard_angvel", type=float, default=1.0, help="键盘控制的角速度大小")
-parser.add_argument("--termination_mode", type=str, default="full", help="终止模式: full=全部检查, time_only=仅超时, none=不禁用")
+parser.add_argument("--termination_mode", type=str, default="full", help="终止模式: full=摔倒/出界等, time_only=仅超时, none=不禁用")
+parser.add_argument("--debug_ray", action="store_true", default=False, help="启用射线检测可视化")
 
 sys.path.append(os.path.join(os.getcwd(), "scripts", "instinct_rl"))
 import cli_args
@@ -167,6 +168,17 @@ def main():
         print("[INFO] 使用vis地形配置进行泛化测试 (MY_TERRAIN_CFG)")
         env_cfg.scene.terrain.terrain_generator = MY_TERRAIN_CFG
         env_cfg.scene.terrain.curriculum = False
+
+    if getattr(args_cli, 'debug_ray', False):
+        if hasattr(env_cfg.scene, 'left_height_scanner'):
+            env_cfg.scene.left_height_scanner.debug_vis = True
+        if hasattr(env_cfg.scene, 'right_height_scanner'):
+            env_cfg.scene.right_height_scanner.debug_vis = True
+        if hasattr(env_cfg.scene, 'leg_volume_points'):
+            env_cfg.scene.leg_volume_points.debug_vis = True
+        if hasattr(env_cfg.scene, 'camera'):
+            env_cfg.scene.camera.debug_vis = True
+        print("[INFO] 启用射线检测可视化")
 
     term_mode = getattr(args_cli, 'termination_mode', 'full')
     if term_mode == "none":
