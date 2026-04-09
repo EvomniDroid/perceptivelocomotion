@@ -110,6 +110,7 @@ class FallRateClassifier:
             vertical_aperture=self.vertical_aperture,
         )
         model_input = model_input.to(self.device)
+        model_input = model_input.unsqueeze(0)
 
         outputs = self.model(model_input)
         probabilities = F.softmax(outputs, dim=1)
@@ -408,6 +409,17 @@ def main():
     try:
         while True:
             depth_np = None
+
+            try:
+                depth_data = raw_env.scene["camera"].data.output["distance_to_image_plane"]
+                if depth_data is not None and len(depth_data) > 0:
+                    depth_np = depth_data[0].cpu().numpy()
+                    if depth_np.ndim == 3:
+                        depth_np = depth_np.squeeze(-1)
+                    depth_np = np.nan_to_num(depth_np, nan=0.0, posinf=10.0, neginf=0.0)
+            except Exception as e:
+                if timestep % 200 == 0:
+                    print(f"[DEBUG] 获取深度图失败: {e}")
 
             if classifier is not None and depth_np is not None:
                 fall_rate, label, terrain_name = classifier.predict(depth_np)
