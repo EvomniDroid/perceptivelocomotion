@@ -1,6 +1,7 @@
 """部署脚本：RL策略 + 摔倒率分类器 + 运动规划器"""
 
 import argparse
+import math
 import os
 import sys
 
@@ -20,6 +21,7 @@ parser.add_argument("--keyboard_linvel_step", type=float, default=0.5, help="键
 parser.add_argument("--keyboard_angvel", type=float, default=1.0, help="键盘控制的角速度大小")
 parser.add_argument("--termination_mode", type=str, default="full", help="终止模式: full=摔倒/出界等, time_only=仅超时, none=不禁用")
 parser.add_argument("--debug_ray", action="store_true", default=False, help="启用射线检测可视化")
+parser.add_argument("--target_pos", type=str, default=None, help="目标位置(x,y)，例如2.0,2.0，单位米")
 
 sys.path.append(os.path.join(os.getcwd(), "scripts", "instinct_rl"))
 import cli_args
@@ -122,34 +124,87 @@ class FallRateClassifier:
 class MotionPlanner:
     """运动规划器接口 - 根据摔倒率和地形类型调整动作"""
 
-    def __init__(self, cfg=None, vel_debug=False, debug_vels=None):
+    def __init__(self, cfg=None, vel_debug=False, debug_vels=None, target_pos=None):
         self.cfg = cfg or {}
         self.safe_mode_lin_vel_scale = self.cfg.get("safe_mode_lin_vel_scale", 0.5)
         self.safe_mode_step_width = self.cfg.get("safe_mode_step_width", 0.5)
         self.vel_debug = vel_debug
         self.debug_vels = debug_vels or {}
+        self.target_pos = target_pos
+        self.init_pos = None
+        self.Kp_lin = 0.5
+        self.Kp_ang = 1.5
 
-    def get_action(self, obs, fall_rate, terrain_type, command_obs_slice, vel_debug=False, keyboard_command=None):
+    def set_target(self, x, y):
+        self.target_pos = (x, y)
+        self.init_pos = None
+        print(f"[规划] 目标位置设置为: ({x:.2f}, {y:.2f}) 相对坐标")
+
+    def get_action(self, obs, fall_rate, terrain_type, command_obs_slice, vel_debug=False, keyboard_command=None, robot_pos=None, robot_yaw=None, timestep=0):
         if not vel_debug:
             return obs
 
-        vel_x, vel_y, ang_z = self._get_blended_velocity(keyboard_command)
+        vel_x, vel_y, ang_z = self._get_blended_velocity(keyboard_command, robot_pos, robot_yaw, timestep)
         obs = self._inject_velocity(obs, command_obs_slice, vel_x, vel_y, ang_z)
         return obs
 
-    def _get_blended_velocity(self, keyboard_command):
-        """混合速度选择：键盘优先，无键盘输入则用默认规划（一直往前）"""
+    def _get_blended_velocity(self, keyboard_command, robot_pos=None, robot_yaw=None, timestep=None):
+        """混合速度选择：键盘优先，无键盘输入则用位置控制"""
         if keyboard_command is not None:
             kx = keyboard_command[0, 0].item()
             ky = keyboard_command[0, 1].item()
             kz = keyboard_command[0, 2].item()
-            print(f"[规划] 键盘接管: vel_x={kx:.2f}, vel_y={ky:.2f}, ang_z={kz:.2f}")
-            return kx, ky, kz
+            if abs(kx) > 0.01 or abs(ky) > 0.01 or abs(kz) > 0.01:
+                print(f"[规划] 键盘接管: vel_x={kx:.2f}, vel_y={ky:.2f}, ang_z={kz:.2f}")
+                return kx, ky, kz
 
-        vel_x = self.debug_vels.get("vel_x", 0.5)
-        vel_y = self.debug_vels.get("vel_y", 0.0)
-        ang_z = self.debug_vels.get("ang_z", 0.0)
-        return vel_x, vel_y, ang_z
+        if self.target_pos is not None and robot_pos is not None:
+            return self._position_to_velocity(robot_pos, robot_yaw, timestep=timestep)
+        else:
+            vel_x = self.debug_vels.get("vel_x", 0.5)
+            vel_y = self.debug_vels.get("vel_y", 0.0)
+            ang_z = self.debug_vels.get("ang_z", 0.0)
+            return vel_x, vel_y, ang_z
+
+    def _position_to_velocity(self, robot_pos, robot_yaw=None, log_interval=100, timestep=None):
+        """Pure Pursuit 视线导航：将相对位置转为速度命令（考虑机器人当前朝向）"""
+        rx, ry = robot_pos[0], robot_pos[1]
+
+        if self.init_pos is None:
+            self.init_pos = (rx, ry)
+            init_yaw = robot_yaw if robot_yaw is not None else 0.0
+            print(f"[规划] 记录起始位置: ({rx:.2f}, {ry:.2f}), 朝向: {math.degrees(init_yaw):.1f}°")
+
+        tx = self.init_pos[0] + self.target_pos[0]
+        ty = self.init_pos[1] + self.target_pos[1]
+
+        dx = tx - rx
+        dy = ty - ry
+        dist = math.sqrt(dx*dx + dy*dy)
+        world_angle = math.atan2(dy, dx)
+
+        rel_angle = world_angle - (robot_yaw if robot_yaw is not None else 0.0)
+        while rel_angle > math.pi:
+            rel_angle -= 2 * math.pi
+        while rel_angle < -math.pi:
+            rel_angle += 2 * math.pi
+
+        if dist < 0.1:
+            if timestep is None or timestep % log_interval == 0:
+                print(f"[规划] 到达目标! dist={dist:.3f}")
+            return 0.0, 0.0, 0.0
+
+        vel_x = self.Kp_lin * dist
+        vel_x = max(0.0, min(vel_x, 0.8))
+        ang_z = self.Kp_ang * rel_angle
+        ang_z = max(-1.5, min(ang_z, 1.5))
+
+        if abs(ang_z) > 0.1:
+            vel_x *= 0.5
+
+        if timestep is None or timestep % log_interval == 0:
+            print(f"[规划] 当前({rx:.2f},{ry:.2f}) 目标({tx:.2f},{ty:.2f}) 距离:{dist:.2f} 世界角:{math.degrees(world_angle):.1f}° 相对角:{math.degrees(rel_angle):.1f}° -> vel({vel_x:.2f},{ang_z:.2f})")
+        return vel_x, 0.0, ang_z
 
     def _inject_velocity(self, obs, command_obs_slice, vel_x, vel_y, ang_z):
         obs = obs.clone()
@@ -265,10 +320,23 @@ def main():
         "vel_y": vel_parts[1] if len(vel_parts) > 1 else 0.0,
         "ang_z": vel_parts[2] if len(vel_parts) > 2 else 0.0,
     }
+
+    target_pos = None
+    target_pos_str = getattr(args_cli, 'target_pos', None)
+    if target_pos_str:
+        try:
+            parts = [float(x) for x in target_pos_str.split(',')]
+            if len(parts) >= 2:
+                target_pos = (parts[0], parts[1])
+                print(f"[INFO] 目标位置: ({target_pos[0]}, {target_pos[1]})")
+        except:
+            print(f"[WARN] 无效的目标位置格式: {target_pos_str}，使用默认速度模式")
+
     planner = MotionPlanner(
         cfg={"safe_mode_lin_vel_scale": 0.5},
         vel_debug=getattr(args_cli, 'vel_debug', False),
-        debug_vels=debug_vels
+        debug_vels=debug_vels,
+        target_pos=target_pos
     )
 
     command_obs_slice = get_obs_slice(env.get_obs_segments(), "velocity_commands")
@@ -282,6 +350,16 @@ def main():
 
     obs, _ = env.get_observations()
     timestep = 0
+
+    raw_env = env.unwrapped
+    while hasattr(raw_env, 'env'):
+        raw_env = raw_env.env
+    print(f"[DEBUG] raw_env type: {type(raw_env)}")
+    if hasattr(raw_env, 'scene'):
+        print(f"[DEBUG] env.scene keys: {list(raw_env.scene.keys())}")
+
+    # 保存raw_env供后面循环使用
+    env_scene = raw_env.scene
 
     keyboard_command = torch.zeros(env.num_envs, 3, device=env.device)
     keyboard_linvel_step = getattr(args_cli, 'keyboard_linvel_step', 0.5)
@@ -337,10 +415,28 @@ def main():
                 fall_rate = 0.0
                 terrain_name = "unknown"
 
-            obs = planner.get_action(obs, fall_rate, terrain_name, command_obs_slice, vel_debug=getattr(args_cli, 'vel_debug', False), keyboard_command=keyboard_command if getattr(args_cli, 'keyboard_control', False) else None)
+            robot_pos = None
+            robot_yaw = None
+            try:
+                robot_entity = env_scene["robot"]
+                root_pos = robot_entity.data.root_link_pos_w
+                root_quat = robot_entity.data.root_quat_w
+                if torch.is_tensor(root_pos) and torch.is_tensor(root_quat):
+                    rx = root_pos[0, 0].item()
+                    ry = root_pos[0, 1].item()
+                    robot_pos = (rx, ry)
+                    q = root_quat[0]
+                    w, x, y, z = q[0].item(), q[1].item(), q[2].item(), q[3].item()
+                    robot_yaw = math.atan2(2.0*(w*z + x*y), 1.0 - 2.0*(y*y + z*z))
+            except Exception as e:
+                if timestep % 200 == 0:
+                    print(f"[DEBUG] 获取位置失败: {e}")
+
+            obs = planner.get_action(obs, fall_rate, terrain_name, command_obs_slice, vel_debug=getattr(args_cli, 'vel_debug', False), keyboard_command=keyboard_command if getattr(args_cli, 'keyboard_control', False) else None, robot_pos=robot_pos, robot_yaw=robot_yaw, timestep=timestep)
 
             if timestep % 100 == 0:
-                print(f"[t={timestep}] 运行中 | 模式: vel_debug | 地形: {terrain_name} | 摔倒率: {fall_rate:.3f}")
+                pos_str = f"({robot_pos[0]:.2f}, {robot_pos[1]:.2f})" if robot_pos else "N/A"
+                print(f"[t={timestep}] pos={pos_str} | 地形: {terrain_name} | 摔倒率: {fall_rate:.3f}")
 
             actions = policy(obs)
             obs, _, _, _ = env.step(actions)
