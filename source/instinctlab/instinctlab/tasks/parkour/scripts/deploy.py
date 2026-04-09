@@ -143,9 +143,8 @@ class MotionPlanner:
             kx = keyboard_command[0, 0].item()
             ky = keyboard_command[0, 1].item()
             kz = keyboard_command[0, 2].item()
-            if abs(kx) > 0.01 or abs(ky) > 0.01 or abs(kz) > 0.01:
-                print(f"[规划] 键盘接管: vel_x={kx:.2f}, vel_y={ky:.2f}, ang_z={kz:.2f}")
-                return kx, ky, kz
+            print(f"[规划] 键盘接管: vel_x={kx:.2f}, vel_y={ky:.2f}, ang_z={kz:.2f}")
+            return kx, ky, kz
 
         vel_x = self.debug_vels.get("vel_x", 0.5)
         vel_y = self.debug_vels.get("vel_y", 0.0)
