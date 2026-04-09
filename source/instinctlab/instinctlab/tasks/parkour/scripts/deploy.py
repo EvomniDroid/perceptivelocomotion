@@ -183,9 +183,11 @@ def main():
         env_cfg.terminations.bad_orientation = None
         env_cfg.terminations.root_height = None
         env_cfg.terminations.dataset_exhausted = None
-        print("[INFO] termination_mode=time_only: 仅保留超时终止")
+        print("[INFO] termination_mode=time_only: 仅超时终止")
     else:
-        print("[INFO] termination_mode=full: 使用全部终止检测")
+        env_cfg.terminations.time_out = None
+        env_cfg.terminations.dataset_exhausted = None
+        print("[INFO] termination_mode=full: 摔倒/出界等终止，超时不禁用")
 
     agent_cfg: InstinctRlOnPolicyRunnerCfg = cli_args.parse_instinct_rl_cfg(args_cli.task, args_cli)
 
