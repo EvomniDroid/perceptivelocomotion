@@ -15,6 +15,9 @@ parser.add_argument("--fall_rate_threshold", type=float, default=0.5, help="切�
 parser.add_argument("--use_vis_terrain", action="store_true", default=False, help="使用vis.py的地形配置进行泛化测试")
 parser.add_argument("--vel_debug", action="store_true", default=False, help="启用速度调试模式，使用直接速度指令替代RL策略")
 parser.add_argument("--vel", type=str, default="0.5,0.0,0.0", help="调试模式速度向量: vel_x,vel_y,ang_z (逗号分隔，默认0.5,0.0,0.0)")
+parser.add_argument("--keyboard_control", action="store_true", default=False, help="启用键盘控制速度 (WASD)")
+parser.add_argument("--keyboard_linvel_step", type=float, default=0.5, help="键盘每次调整的速度增量")
+parser.add_argument("--keyboard_angvel", type=float, default=1.0, help="键盘控制的角速度大小")
 
 sys.path.append(os.path.join(os.getcwd(), "scripts", "instinct_rl"))
 import cli_args
@@ -28,6 +31,10 @@ if getattr(args_cli, 'video', False):
 
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
+
+import carb.input
+import omni.appwindow
+from carb.input import KeyboardEventType
 
 from instinct_rl.utils.utils import get_obs_slice
 import gymnasium as gym
@@ -120,18 +127,23 @@ class MotionPlanner:
         self.vel_debug = vel_debug
         self.debug_vels = debug_vels or {}
 
-    def get_action(self, obs, fall_rate, terrain_type, command_obs_slice, vel_debug=False):
+    def get_action(self, obs, fall_rate, terrain_type, command_obs_slice, vel_debug=False, keyboard_command=None):
         if vel_debug:
-            obs = self._inject_debug_velocity(obs, command_obs_slice)
+            obs = self._inject_debug_velocity(obs, command_obs_slice, keyboard_command)
             return obs
 
         return obs
 
-    def _inject_debug_velocity(self, obs, command_obs_slice):
+    def _inject_debug_velocity(self, obs, command_obs_slice, keyboard_command=None):
         obs = obs.clone()
-        vel_x = self.debug_vels.get("vel_x", 0.5)
-        vel_y = self.debug_vels.get("vel_y", 0.0)
-        ang_z = self.debug_vels.get("ang_z", 0.0)
+        if keyboard_command is not None:
+            vel_x = keyboard_command[0, 0].item()
+            vel_y = keyboard_command[0, 1].item()
+            ang_z = keyboard_command[0, 2].item()
+        else:
+            vel_x = self.debug_vels.get("vel_x", 0.5)
+            vel_y = self.debug_vels.get("vel_y", 0.0)
+            ang_z = self.debug_vels.get("ang_z", 0.0)
         debug_cmd = torch.tensor([[vel_x, vel_y, ang_z]], device=obs.device)
         debug_cmd_repeated = debug_cmd.repeat(1, command_obs_slice[1][0] // 3)
         obs[:, command_obs_slice[0]] = debug_cmd_repeated
@@ -232,6 +244,38 @@ def main():
     obs, _ = env.get_observations()
     timestep = 0
 
+    keyboard_command = torch.zeros(env.num_envs, 3, device=env.device)
+    keyboard_linvel_step = getattr(args_cli, 'keyboard_linvel_step', 0.5)
+    keyboard_angvel = getattr(args_cli, 'keyboard_angvel', 1.0)
+
+    if getattr(args_cli, 'keyboard_control', False):
+        def on_keyboard_input(e):
+            if e.input == carb.input.KeyboardInput.W:
+                if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
+                    keyboard_command[:, 0] += keyboard_linvel_step
+                    print(f"[键盘] W: vel_x += {keyboard_linvel_step} -> {keyboard_command[0, 0].item():.2f}")
+            if e.input == carb.input.KeyboardInput.S:
+                if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
+                    keyboard_command[:, 0] = 0.0
+                    print(f"[键盘] S: 停止前进")
+            if e.input == carb.input.KeyboardInput.A:
+                if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
+                    keyboard_command[:, 2] = keyboard_angvel
+                    print(f"[键盘] A: 左转 ang_z = {keyboard_angvel}")
+            if e.input == carb.input.KeyboardInput.D:
+                if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
+                    keyboard_command[:, 2] = -keyboard_angvel
+                    print(f"[键盘] D: 右转 ang_z = {-keyboard_angvel}")
+            if e.input == carb.input.KeyboardInput.X:
+                if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
+                    keyboard_command[:] = 0.0
+                    print(f"[键盘] X: 急停!")
+
+        app_window = omni.appwindow.get_default_app_window()
+        keyboard = app_window.get_keyboard()
+        input = carb.input.acquire_input_interface()
+        input.subscribe_to_keyboard_events(keyboard, on_keyboard_input)
+
     print("\n" + "="*60)
     print("开始部署循环...")
     print("="*60 + "\n")
@@ -246,7 +290,7 @@ def main():
                 fall_rate = 0.0
                 terrain_name = "unknown"
 
-            obs = planner.get_action(obs, fall_rate, terrain_name, command_obs_slice, vel_debug=getattr(args_cli, 'vel_debug', False))
+            obs = planner.get_action(obs, fall_rate, terrain_name, command_obs_slice, vel_debug=getattr(args_cli, 'vel_debug', False), keyboard_command=keyboard_command if getattr(args_cli, 'keyboard_control', False) else None)
 
             if timestep % 100 == 0:
                 print(f"[t={timestep}] 运行中 | 模式: vel_debug | 地形: {terrain_name} | 摔倒率: {fall_rate:.3f}")
