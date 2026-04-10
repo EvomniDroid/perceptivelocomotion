@@ -64,7 +64,7 @@ def _terrain_with_sampling(name, enabled=True, num_patches=10):
 
 def _terrain_layout_to_ordered_dict(terrain_layout, expected_count=None):
     """
-    根据名字列表生成有序的 sub_terrains 字典
+    根据名字列表生成有序的 sub_terrains 字典，支持重复地形名
 
     Args:
         terrain_layout: 地形名字列表，如 ["perlin_rough", "pyramid_stairs", ...]
@@ -72,7 +72,7 @@ def _terrain_layout_to_ordered_dict(terrain_layout, expected_count=None):
         expected_count: 期望的元素数量（num_rows * num_cols），用于验证
 
     Returns:
-        OrderedDict，key 是原始地形名字（重复会被覆盖），value 是对应配置
+        OrderedDict，key 是 terrain_0, terrain_1, ...（按顺序），value 是对应配置
 
     Raises:
         ValueError: 如果 terrain_layout 长度与 expected_count 不匹配
@@ -91,16 +91,14 @@ def _terrain_layout_to_ordered_dict(terrain_layout, expected_count=None):
     for idx, name in enumerate(terrain_layout):
         if name not in SHARED_SUB_TERRAINS:
             raise ValueError(f"未知的地形名称: '{name}'。可用的地形: {list(SHARED_SUB_TERRAINS.keys())}")
-        result[name] = _terrain_with_sampling(name, enabled=False)
+        key = f"terrain_{idx}"
+        result[key] = _terrain_with_sampling(name, enabled=False)
     return result
 
 
 # ====================================================================
 # 共享的 sub_terrains 字典 - 所有地形类型定义
-# ====================================================================
-# 这个字典包含所有可用的子地形类型
-# vis.py 和 parkour_env_cfg.py 都引用此字典
-
+# ====================================================================to 1 or 2 rather than 0), together with this flag, to improve the accuracy of velocity updates.
 SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
 
     # 地形1: Perlin噪声粗糙地面
@@ -147,18 +145,18 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
 
-    # 地形3: 金字塔楼梯
+    # 地形 3: 金字塔楼梯
     # 特点：金字塔形状的楼梯，从外向内逐级上升/下降
     "pyramid_stairs": PerlinPyramidStairsTerrainCfg(
         proportion=1.0,
-        step_height_range=(0.05, 0.23),      # 每级台阶高度范围（米）
-        step_width=0.3,                       # 台阶宽度（米）
-        platform_width=1.5,                   # 金字塔顶部平台宽度（米）
+        step_height_range=(0.08, 0.25),      # 每级台阶高度范围（米）
+        step_width=0.25,                      # 台阶宽度（米）
+        platform_width=0.8,                   # 金字塔顶部平台宽度（米）
         border_width=0.3,                    # 边缘宽度（米）
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
         wall_thickness=0.05,
-        perlin_cfg=PerlinPlaneTerrainCfg(    # 楼梯表面叠加的Perlin噪声
+        perlin_cfg=PerlinPlaneTerrainCfg(    # 楼梯表面叠加的 Perlin 噪声
             noise_scale=0.05,                 # 噪声缩放（表面粗糙度）
             noise_frequency=20,
             fractal_octaves=2,
@@ -177,12 +175,12 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
 
-    # 地形4: 反向金字塔楼梯
+    # 地形 4: 反向金字塔楼梯
     "pyramid_stairs_inv": PerlinInvertedPyramidStairsTerrainCfg(
         proportion=1.0,
-        step_height_range=(0.05, 0.23),
-        step_width=0.3,
-        platform_width=1.5,
+        step_height_range=(0.08, 0.25),
+        step_width=0.25,
+        platform_width=0.8,
         border_width=0.3,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
@@ -234,11 +232,11 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
 
-    # 地形6: 金字塔斜坡
+    # 地形 6: 金字塔斜坡
     "pyramid_slope": PerlinPyramidSlopedTerrainCfg(
         proportion=1.0,
-        slope_range=(20, 30),
-        platform_width=1.5,
+        slope_range=(35, 45),
+        platform_width=0.5,
         border_width=0.3,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
@@ -260,11 +258,11 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
 
-    # 地形7: 反向金字塔斜坡
+    # 地形 7: 反向金字塔斜坡
     "pyramid_slope_inv": PerlinInvertedPyramidSlopedTerrainCfg(
         proportion=1.0,
-        slope_range=(20, 30),
-        platform_width=1.5,
+        slope_range=(35, 45),
+        platform_width=0.5,
         border_width=0.3,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
@@ -361,11 +359,11 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
 
-    # 地形11: 排水沟/檐沟
+    # 地形 11: 排水沟/檐沟
     "gutter": PerlinGutterTerrainCfg(
         proportion=1.0,
         gutter_length=(0.5, 1.5),
-        gutter_depth=(0.0, 0.0),
+        gutter_depth=(0.1, 0.3),
         gutter_width=0.3,
         border_width=0.3,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
@@ -532,28 +530,50 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
 # ====================================================================
 # vis.py 用的地形配置 - 用于可视化
 # ====================================================================
-# MY_TERRAIN_CFG 用于 vis.py，显示选择的6种地形
+# MY_TERRAIN_CFG 用于 vis.py，显示 11 种有效地形
 # 使用 terrain_layout 指定每个格子的地形类型（按名字）
-# num_rows=4, num_cols=6 -> 24个格子，terrain_layout 需要24个元素
+# num_rows=6, num_cols=4 -> 24 个格子，terrain_layout 需要 24 个元素
+# 布局设计：前两行展示所有 11 种有效地形，后面用重复地形填充
 
 MY_TERRAIN_CFG = FiledTerrainGeneratorCfg(
     class_type=FiledTerrainGenerator,
     seed=0,
     size=(2.0, 2.0),
     border_width=0.05,
-    num_rows=4,
-    num_cols=6,
+    num_rows=6,
+    num_cols=4,
     horizontal_scale=0.05,
     vertical_scale=0.005,
     slope_threshold=1.0,
     use_cache=False,
     curriculum=False,
+    terrain_layout=[
+        # 第 1 行：4 种地形
+        "perlin_rough",        # 粗糙地面
+        "square_gaps",         # 方形坑洞
+        "pyramid_stairs",      # 金字塔楼梯（上）
+        "pyramid_stairs_inv",  # 金字塔楼梯（下）
+        # 第 2 行：4 种地形
+        "discrete_obstacles",  # 离散障碍物
+        "pyramid_slope",       # 金字塔斜坡
+        "pyramid_slope_inv",   # 反向金字塔斜坡
+        "wave",                # 波浪地形
+        # 第 3 行：3 种地形 + 重复
+        "stepping_stones",     # 踏脚石
+        "parapet",             # 矮墙
+        "gutter",              # 排水沟
+        "perlin_rough",        # 重复粗糙地面
+        # 第 4-6 行：全部用粗糙地面填充（其他地形可能有参数问题）
+        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+    ],
     sub_terrains=_terrain_layout_to_ordered_dict([
         "perlin_rough", "square_gaps", "pyramid_stairs", "pyramid_stairs_inv", "discrete_obstacles", "pyramid_slope",
-        "perlin_rough", "square_gaps", "pyramid_stairs", "pyramid_stairs_inv", "discrete_obstacles", "pyramid_slope",
         "pyramid_slope_inv", "wave", "stepping_stones", "parapet", "gutter", "perlin_rough",
-        "pyramid_slope_inv", "wave", "stepping_stones", "parapet", "gutter", "perlin_rough",
-    ], expected_count=4*6),
+        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+    ], expected_count=6*4),
 )
 
 

@@ -7,3 +7,4 @@ from .terrain_generator import FiledTerrainGenerator
 @configclass
 class FiledTerrainGeneratorCfg(TerrainGeneratorCfgBase):
     class_type: type = FiledTerrainGenerator
+    terrain_layout: list = None

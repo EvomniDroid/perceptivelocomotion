@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from isaaclab.terrains import SubTerrainBaseCfg, TerrainGenerator
 
 if TYPE_CHECKING:
@@ -15,7 +17,6 @@ class FiledTerrainGenerator(TerrainGenerator):
         print(f"[InstinctLab FiledTerrainGenerator] __init__ called! cfg type: {type(cfg)} id={id(self)}")
         self._subterrain_specific_cfgs: list[SubTerrainBaseCfg] = []
         self._orig_sub_terrains = {}
-        # 先遍历sub_terrains，强制patch_cfg.name = patch_key，保存到_orig_sub_terrains
         if hasattr(cfg, 'sub_terrains') and isinstance(cfg.sub_terrains, dict):
             for patch_key, patch_cfg in cfg.sub_terrains.items():
                 try:
@@ -23,9 +24,11 @@ class FiledTerrainGenerator(TerrainGenerator):
                 except Exception:
                     object.__setattr__(patch_cfg, "name", patch_key)
                 self._orig_sub_terrains[patch_key] = patch_cfg
-        # 再调用父类，父类会在内部使用cfg.sub_terrains生成terrain
+        self._terrain_layout_names = list(cfg.terrain_layout) if cfg.terrain_layout else []
         super().__init__(cfg, device)
         print(f"[InstinctLab FiledTerrainGenerator] after super().__init__, subterrain_specific_cfgs len={len(self._subterrain_specific_cfgs)}")
+        print(f"[FiledTerrainGenerator] terrain_layout_names = {self._terrain_layout_names}")
+        print(f"[FiledTerrainGenerator] num_rows={cfg.num_rows}, num_cols={cfg.num_cols}, total={cfg.num_rows * cfg.num_cols}")
 
     def _get_terrain_mesh(self, difficulty: float, cfg: SubTerrainBaseCfg):
         mesh, origin = super()._get_terrain_mesh(difficulty, cfg)
@@ -59,9 +62,7 @@ class FiledTerrainGenerator(TerrainGenerator):
         super()._add_sub_terrain(mesh, origin, row, col, sub_terrain_cfg)
 
     def _generate_subterrain(self, name, cfg, *args, **kwargs):
-        # 记录当前subterrain的名字，供_get_terrain_mesh用
         self._current_subterrain_name = name
-        # 强制给cfg加上name字段
         try:
             cfg.name = name
         except Exception:
@@ -69,6 +70,18 @@ class FiledTerrainGenerator(TerrainGenerator):
         print(f"[FiledTerrainGenerator] _generate_subterrain: 强制cfg.name={cfg.name}")
         self._current_subterrain_name = None
         return None
+
+    def _generate_random_terrains(self):
+        """按顺序分配terrain，而不是随机分配（覆盖父类方法）"""
+        sub_terrains_list = list(self.cfg.sub_terrains.values())
+        num_terrains = len(sub_terrains_list)
+
+        for index in range(self.cfg.num_rows * self.cfg.num_cols):
+            (sub_row, sub_col) = np.unravel_index(index, (self.cfg.num_rows, self.cfg.num_cols))
+            terrain_idx = index % num_terrains
+            difficulty = self.np_rng.uniform(*self.cfg.difficulty_range)
+            mesh, origin = self._get_terrain_mesh(difficulty, sub_terrains_list[terrain_idx])
+            self._add_sub_terrain(mesh, origin, sub_row, sub_col, sub_terrains_list[terrain_idx])
 
     @property
     def subterrain_specific_cfgs(self) -> list[SubTerrainBaseCfg]:
