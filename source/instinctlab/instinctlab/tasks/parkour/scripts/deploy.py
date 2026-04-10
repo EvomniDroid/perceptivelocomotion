@@ -136,7 +136,6 @@ class MotionPlanner:
         self.Kp_lin = 0.5
         self.Kp_ang = 1.5
         self._keyboard_active = False
-        self._last_keyboard_command = None
 
     def set_target(self, x, y):
         self.target_pos = (x, y)
@@ -147,46 +146,25 @@ class MotionPlanner:
         if not vel_debug:
             return obs
 
-        vel_x, vel_y, ang_z = self._get_blended_velocity(keyboard_command, robot_pos, robot_yaw, timestep)
+        vel_x, vel_y, ang_z = self._get_blended_velocity(keyboard_command)
         obs = self._inject_velocity(obs, command_obs_slice, vel_x, vel_y, ang_z)
         return obs
 
-    def _get_blended_velocity(self, keyboard_command, robot_pos=None, robot_yaw=None, timestep=None):
-        """混合速度选择：键盘优先，无键盘输入则用位置控制"""
+    def _get_blended_velocity(self, keyboard_command):
+        """混合速度选择：键盘优先，无键盘输入则用默认规划（一直往前）"""
         if keyboard_command is not None:
             kx = keyboard_command[0, 0].item()
             ky = keyboard_command[0, 1].item()
             kz = keyboard_command[0, 2].item()
-
-            if self._last_keyboard_command is not None:
-                was_nonzero = (abs(self._last_keyboard_command[0]) > 0.01 or
-                              abs(self._last_keyboard_command[1]) > 0.01 or
-                              abs(self._last_keyboard_command[2]) > 0.01)
-                is_zero = (abs(kx) < 0.01 and abs(ky) < 0.01 and abs(kz) < 0.01)
-                if was_nonzero and is_zero:
-                    print(f"[规划] 急停!")
-                    self._keyboard_active = False
-                    self._last_keyboard_command = keyboard_command[0].clone()
-                    return 0.0, 0.0, 0.0
-
-            if abs(kx) > 0.01 or abs(ky) > 0.01 or abs(kz) > 0.01:
-                print(f"[规划] 键盘接管: vel_x={kx:.2f}, vel_y={ky:.2f}, ang_z={kz:.2f}")
+            if self._keyboard_active or abs(kx) > 0.01 or abs(ky) > 0.01 or abs(kz) > 0.01:
                 self._keyboard_active = True
-                self._last_keyboard_command = keyboard_command[0].clone()
+                print(f"[规划] 键盘接管: vel_x={kx:.2f}, vel_y={ky:.2f}, ang_z={kz:.2f}")
                 return kx, ky, kz
 
-            self._last_keyboard_command = keyboard_command[0].clone()
-            if self._keyboard_active:
-                print(f"[规划] 键盘减速模式: vel_x={kx:.2f}, vel_y={ky:.2f}, ang_z={kz:.2f}")
-                return kx, ky, kz
-
-        if self.target_pos is not None and robot_pos is not None:
-            return self._position_to_velocity(robot_pos, robot_yaw, timestep=timestep)
-        else:
-            vel_x = self.debug_vels.get("vel_x", 0.5)
-            vel_y = self.debug_vels.get("vel_y", 0.0)
-            ang_z = self.debug_vels.get("ang_z", 0.0)
-            return vel_x, vel_y, ang_z
+        vel_x = self.debug_vels.get("vel_x", 0.5)
+        vel_y = self.debug_vels.get("vel_y", 0.0)
+        ang_z = self.debug_vels.get("ang_z", 0.0)
+        return vel_x, vel_y, ang_z
 
     def _position_to_velocity(self, robot_pos, robot_yaw=None, log_interval=100, timestep=None):
         """Pure Pursuit 视线导航：将相对位置转为速度命令（考虑机器人当前朝向）"""
@@ -387,6 +365,9 @@ def main():
     keyboard_linvel_step = getattr(args_cli, 'keyboard_linvel_step', 0.5)
     keyboard_angvel = getattr(args_cli, 'keyboard_angvel', 1.0)
 
+    emergency_stop = False
+    last_emergency_state = False
+
     if getattr(args_cli, 'keyboard_control', False):
         def on_keyboard_input(e):
             if e.input == carb.input.KeyboardInput.W:
@@ -395,8 +376,8 @@ def main():
                     print(f"[键盘] W: vel_x += {keyboard_linvel_step} -> {keyboard_command[0, 0].item():.2f}")
             if e.input == carb.input.KeyboardInput.S:
                 if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
-                    keyboard_command[:, 0] = 0.0
-                    print(f"[键盘] S: 停止前进")
+                    keyboard_command[:, 0] = max(0.0, keyboard_command[:, 0].item() - keyboard_linvel_step)
+                    print(f"[键盘] S: vel_x -= {keyboard_linvel_step} -> {keyboard_command[0, 0].item():.2f}")
             if e.input == carb.input.KeyboardInput.A:
                 if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
                     keyboard_command[:, 2] = keyboard_angvel
@@ -416,6 +397,7 @@ def main():
             if e.input == carb.input.KeyboardInput.X:
                 if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
                     keyboard_command[:] = 0.0
+                    emergency_stop = True
                     print(f"[键盘] X: 急停!")
 
         app_window = omni.appwindow.get_default_app_window()
@@ -471,7 +453,15 @@ def main():
                 pos_str = f"({robot_pos[0]:.2f}, {robot_pos[1]:.2f})" if robot_pos else "N/A"
                 print(f"[t={timestep}] pos={pos_str} | 地形: {terrain_name} | 摔倒率: {fall_rate:.3f}")
 
-            actions = policy(obs)
+            if emergency_stop:
+                if timestep == 0:
+                    actions = policy(obs)
+                actions[:] = 0.0
+                if timestep % 20 == 0:
+                    print(f"[急停] actions[:3]={actions[0, :3].tolist()}")
+            else:
+                actions = policy(obs)
+
             obs, _, _, _ = env.step(actions)
             timestep += 1
 
