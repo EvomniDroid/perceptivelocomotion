@@ -27,6 +27,10 @@ def generate_wall(func: Callable) -> Callable:
         mesh = meshes[0]
         wall_height = cfg.wall_height
         wall_thickness = cfg.wall_thickness
+        if isinstance(wall_height, (list, tuple)):
+            wall_height = np.random.uniform(wall_height[0], wall_height[1])
+        if isinstance(wall_thickness, (list, tuple)):
+            wall_thickness = np.random.uniform(wall_thickness[0], wall_thickness[1])
         result_meshes = [mesh]
 
         # Get mesh bounds

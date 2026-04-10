@@ -146,39 +146,9 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
     ),
 
     # 地形 3: 金字塔楼梯
-    # 特点：金字塔形状的楼梯，从外向内逐级上升/下降
     "pyramid_stairs": PerlinPyramidStairsTerrainCfg(
         proportion=1.0,
-        step_height_range=(0.08, 0.25),      # 每级台阶高度范围（米）
-        step_width=0.25,                      # 台阶宽度（米）
-        platform_width=0.8,                   # 金字塔顶部平台宽度（米）
-        border_width=0.3,                    # 边缘宽度（米）
-        wall_prob=[0.0, 0.0, 0.0, 0.0],
-        wall_height=5.0,
-        wall_thickness=0.05,
-        perlin_cfg=PerlinPlaneTerrainCfg(    # 楼梯表面叠加的 Perlin 噪声
-            noise_scale=0.05,                 # 噪声缩放（表面粗糙度）
-            noise_frequency=20,
-            fractal_octaves=2,
-            fractal_lacunarity=2.0,
-            fractal_gain=0.25,
-            centering=True,
-        ),
-        flat_patch_sampling={
-            "target": FlatPatchSamplingCfg(
-                num_patches=10,
-                patch_radius=[0.05, 0.10, 0.15, 0.20],
-                max_height_diff=0.1,
-                x_range=(-0.5, 0.5),
-                y_range=(-0.5, 0.5),
-            ),
-        },
-    ),
-
-    # 地形 4: 反向金字塔楼梯
-    "pyramid_stairs_inv": PerlinInvertedPyramidStairsTerrainCfg(
-        proportion=1.0,
-        step_height_range=(0.08, 0.25),
+        step_height_range=(0.15, 0.35),
         step_width=0.25,
         platform_width=0.8,
         border_width=0.3,
@@ -197,7 +167,36 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
             "target": FlatPatchSamplingCfg(
                 num_patches=10,
                 patch_radius=[0.05, 0.10, 0.15, 0.20],
-                max_height_diff=0.1,
+                max_height_diff=0.3,
+                x_range=(-0.5, 0.5),
+                y_range=(-0.5, 0.5),
+            ),
+        },
+    ),
+
+    # 地形 4: 反向金字塔楼梯
+    "pyramid_stairs_inv": PerlinInvertedPyramidStairsTerrainCfg(
+        proportion=1.0,
+        step_height_range=(0.15, 0.35),
+        step_width=0.25,
+        platform_width=0.8,
+        border_width=0.3,
+        wall_prob=[0.0, 0.0, 0.0, 0.0],
+        wall_height=5.0,
+        wall_thickness=0.05,
+        perlin_cfg=PerlinPlaneTerrainCfg(
+            noise_scale=0.05,
+            noise_frequency=20,
+            fractal_octaves=2,
+            fractal_lacunarity=2.0,
+            fractal_gain=0.25,
+            centering=True,
+        ),
+        flat_patch_sampling={
+            "target": FlatPatchSamplingCfg(
+                num_patches=10,
+                patch_radius=[0.05, 0.10, 0.15, 0.20],
+                max_height_diff=0.3,
                 x_range=(-0.5, 0.5),
                 y_range=(-0.5, 0.5),
             ),
@@ -235,8 +234,8 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
     # 地形 6: 金字塔斜坡
     "pyramid_slope": PerlinPyramidSlopedTerrainCfg(
         proportion=1.0,
-        slope_range=(35, 45),
-        platform_width=0.5,
+        slope_range=(5, 10),
+        platform_width=1.0,
         border_width=0.3,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
@@ -261,8 +260,8 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
     # 地形 7: 反向金字塔斜坡
     "pyramid_slope_inv": PerlinInvertedPyramidSlopedTerrainCfg(
         proportion=1.0,
-        slope_range=(35, 45),
-        platform_width=0.5,
+        slope_range=(5, 15),
+        platform_width=1.0,
         border_width=0.3,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
@@ -378,14 +377,14 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
 
-    # 地形12: 上下楼梯
+    # 地形 12: 上下楼梯
     "stairs_up_down": PerlinStairsUpDownTerrainCfg(
         proportion=1.0,
         per_step_height=(0.05, 0.15),
         per_step_width=0.25,
-        per_step_length=(0.25, 0.25),
-        num_steps=(14, 18),
-        platform_length=1.5,
+        per_step_length=(0.15, 0.15),
+        num_steps=(8, 10),
+        platform_length=0.3,
         border_width=0.3,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
@@ -407,14 +406,14 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
 
-    # 地形13: 下上楼梯
+    # 地形 13: 下上楼梯
     "stairs_down_up": PerlinStairsDownUpTerrainCfg(
         proportion=1.0,
         per_step_height=(0.05, 0.15),
         per_step_width=0.25,
-        per_step_length=(0.25, 0.25),
-        num_steps=(14, 18),
-        platform_length=1.5,
+        per_step_length=(0.15, 0.15),
+        num_steps=(8, 10),
+        platform_length=0.3,
         border_width=0.3,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
@@ -436,16 +435,16 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
 
-    # 地形14: 倾斜地面
+    # 地形 14: 倾斜地面（墙壁开口）
     "tilt": PerlinTiltTerrainCfg(
         proportion=1.0,
         wall_height=(0.1, 0.3),
         wall_width=0.2,
-        wall_length=(1.0, 3.0),
-        wall_opening_angle=(30, 60),
-        wall_opening_width=(0.5, 1.5),
+        wall_length=(0.5, 1.0),
+        wall_opening_angle=(10, 30),
+        wall_opening_width=(0.3, 0.6),
         border_width=0.3,
-        wall_prob=[0.0, 0.0, 0.0, 0.0],
+        wall_prob=[0.8, 0.8, 0.8, 0.8],
         wall_thickness=0.05,
         perlin_cfg=PerlinPlaneTerrainCfg(
             noise_scale=0.02,
@@ -464,16 +463,16 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
 
-    # 地形15: 倾斜坡道
+    # 地形 15: 倾斜坡道（参数不适合 2x2 terrain，暂用 perlin_rough）
     "tilted_ramp": PerlinTiltedRampTerrainCfg(
         proportion=1.0,
-        tilt_angle=(15, 25),
-        tilt_height=(0.5, 1.0),
-        tilt_width=(1.0, 2.0),
-        tilt_length=(3.0, 5.0),
-        switch_spacing=(2.0, 4.0),
-        spacing_curriculum=True,
-        overlap_size=0.5,
+        tilt_angle=(5, 15),
+        tilt_height=(0.1, 0.3),
+        tilt_width=(0.5, 1.0),
+        tilt_length=(1.0, 1.5),
+        switch_spacing=(0.5, 1.0),
+        spacing_curriculum=False,
+        overlap_size=0.2,
         border_width=0.3,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
@@ -495,13 +494,13 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
 
-    # 地形16: 交叉石
+    # 地形 16: 十字石
     "cross_stone": PerlinCrossStoneTerrainCfg(
         proportion=1.0,
-        stone_size=(0.3, 0.6),
+        stone_size=(0.2, 0.4),
         stone_height=(0.1, 0.2),
-        stone_spacing=(0.2, 0.4),
-        platform_width=1.5,
+        stone_spacing=(0.15, 0.3),
+        platform_width=0.6,
         border_width=0.3,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
@@ -558,21 +557,26 @@ MY_TERRAIN_CFG = FiledTerrainGeneratorCfg(
         "pyramid_slope",       # 金字塔斜坡
         "pyramid_slope_inv",   # 反向金字塔斜坡
         "wave",                # 波浪地形
-        # 第 3 行：3 种地形 + 重复
+        # 第 3 行：4 种地形
         "stepping_stones",     # 踏脚石
         "parapet",             # 矮墙
         "gutter",              # 排水沟
-        "perlin_rough",        # 重复粗糙地面
-        # 第 4-6 行：全部用粗糙地面填充（其他地形可能有参数问题）
-        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+        "cross_stone",         # 十字石
+        # 第 4 行：4 种地形
+        "stairs_up_down",      # 上下楼梯
+        "stairs_down_up",      # 下上楼梯
+        "tilt",                # 倾斜墙壁
+        "tilted_ramp",         # 倾斜坡道
+        # 第 5-6 行：用粗糙地面填充
         "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
         "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
     ],
     sub_terrains=_terrain_layout_to_ordered_dict([
         "perlin_rough", "square_gaps", "pyramid_stairs", "pyramid_stairs_inv", "discrete_obstacles", "pyramid_slope",
-        "pyramid_slope_inv", "wave", "stepping_stones", "parapet", "gutter", "perlin_rough",
-        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
-        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+        "pyramid_slope_inv", "wave", "stepping_stones", "parapet", "gutter", "cross_stone",
+        "stairs_up_down", "stairs_down_up", "tilt", "tilted_ramp",
+        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
     ], expected_count=6*4),
 )
 
