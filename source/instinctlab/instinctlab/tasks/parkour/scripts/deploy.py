@@ -22,6 +22,7 @@ parser.add_argument("--keyboard_angvel", type=float, default=1.0, help="键盘�
 parser.add_argument("--termination_mode", type=str, default="full", help="终止模式: full=摔倒/出界等, time_only=仅超时, none=不禁用")
 parser.add_argument("--debug_ray", action="store_true", default=False, help="启用射线检测可视化")
 parser.add_argument("--target_pos", type=str, default=None, help="目标位置(x,y)，例如2.0,2.0，单位米")
+parser.add_argument("--spawn_pos", type=str, default=None, help="出生位置(x,y)，例如0.0,0.0，单位米，默认随机")
 
 sys.path.append(os.path.join(os.getcwd(), "scripts", "instinct_rl"))
 import cli_args
@@ -230,6 +231,30 @@ def main():
         print("[INFO] 使用vis地形配置进行泛化测试 (MY_TERRAIN_CFG)")
         env_cfg.scene.terrain.terrain_generator = MY_TERRAIN_CFG
         env_cfg.scene.terrain.curriculum = False
+
+    spawn_pos_str = getattr(args_cli, 'spawn_pos', None)
+    if spawn_pos_str:
+        try:
+            parts = [float(x) for x in spawn_pos_str.split(',')]
+            if len(parts) >= 2:
+                spawn_x, spawn_y = parts[0], parts[1]
+                spawn_yaw = parts[2] if len(parts) > 2 else 0.0
+                print(f"[INFO] spawn_pos: ({spawn_x}, {spawn_y}, yaw={spawn_yaw})")
+                if hasattr(env_cfg.events, 'reset_base') and env_cfg.events.reset_base is not None:
+                    env_cfg.events.reset_base.params["pose_range"] = {
+                        "x": (spawn_x, spawn_x),
+                        "y": (spawn_y, spawn_y),
+                        "yaw": (spawn_yaw, spawn_yaw),
+                    }
+                    env_cfg.events.reset_base.params["velocity_range"] = {
+                        "x": (0, 0), "y": (0, 0), "z": (0, 0),
+                        "roll": (0, 0), "pitch": (0, 0), "yaw": (0, 0),
+                    }
+                    print("[INFO] 已设置固定出生位置")
+                else:
+                    print("[WARN] reset_base 不存在，无法设置出生位置")
+        except Exception as e:
+            print(f"[WARN] spawn_pos 解析失败: {e}")
 
     if getattr(args_cli, 'debug_ray', False):
         if hasattr(env_cfg.scene, 'left_height_scanner'):
