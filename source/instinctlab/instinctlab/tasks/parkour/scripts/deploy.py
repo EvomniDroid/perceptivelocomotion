@@ -135,6 +135,8 @@ class MotionPlanner:
         self.init_pos = None
         self.Kp_lin = 0.5
         self.Kp_ang = 1.5
+        self._keyboard_active = False
+        self._last_keyboard_command = None
 
     def set_target(self, x, y):
         self.target_pos = (x, y)
@@ -155,8 +157,27 @@ class MotionPlanner:
             kx = keyboard_command[0, 0].item()
             ky = keyboard_command[0, 1].item()
             kz = keyboard_command[0, 2].item()
+
+            if self._last_keyboard_command is not None:
+                was_nonzero = (abs(self._last_keyboard_command[0]) > 0.01 or
+                              abs(self._last_keyboard_command[1]) > 0.01 or
+                              abs(self._last_keyboard_command[2]) > 0.01)
+                is_zero = (abs(kx) < 0.01 and abs(ky) < 0.01 and abs(kz) < 0.01)
+                if was_nonzero and is_zero:
+                    print(f"[规划] 急停!")
+                    self._keyboard_active = False
+                    self._last_keyboard_command = keyboard_command[0].clone()
+                    return 0.0, 0.0, 0.0
+
             if abs(kx) > 0.01 or abs(ky) > 0.01 or abs(kz) > 0.01:
                 print(f"[规划] 键盘接管: vel_x={kx:.2f}, vel_y={ky:.2f}, ang_z={kz:.2f}")
+                self._keyboard_active = True
+                self._last_keyboard_command = keyboard_command[0].clone()
+                return kx, ky, kz
+
+            self._last_keyboard_command = keyboard_command[0].clone()
+            if self._keyboard_active:
+                print(f"[规划] 键盘减速模式: vel_x={kx:.2f}, vel_y={ky:.2f}, ang_z={kz:.2f}")
                 return kx, ky, kz
 
         if self.target_pos is not None and robot_pos is not None:
