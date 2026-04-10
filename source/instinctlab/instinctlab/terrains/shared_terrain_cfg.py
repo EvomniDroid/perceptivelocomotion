@@ -30,12 +30,18 @@ from instinctlab.terrains import (
 
 
 def _inject_name_to_cfgs(sub_terrains):
-    """为每个子地形配置注入 name 属性（key 值）"""
+    """为每个子地形配置注入 name 属性（key 值），但不覆盖 terrain_type"""
     for k, v in sub_terrains.items():
-        try:
-            setattr(v, "name", k)
-        except Exception:
-            object.__setattr__(v, "name", k)
+        if not hasattr(v, 'terrain_type') or v.terrain_type is None:
+            try:
+                setattr(v, "name", k)
+            except Exception:
+                object.__setattr__(v, "name", k)
+        else:
+            try:
+                setattr(v, "name", k)
+            except Exception:
+                object.__setattr__(v, "name", k)
     return sub_terrains
 
 
@@ -49,23 +55,44 @@ def _terrain_with_sampling(name, enabled=True, num_patches=10):
         num_patches: 采样数量（仅在 enabled=True 时使用）
 
     Returns:
-        地形配置对象，如果 enabled=False 则 flat_patch_sampling=None
+        地形配置对象
     """
     import copy
     cfg = copy.deepcopy(SHARED_SUB_TERRAINS[name])
-
-    if enabled:
-        cfg.flat_patch_sampling = {
-            "target": FlatPatchSamplingCfg(
-                num_patches=num_patches,
-                patch_radius=[0.05, 0.10, 0.15, 0.20],
-                max_height_diff=0.15,
-            ),
-        }
-    else:
-        cfg.flat_patch_sampling = None
-
     return cfg
+
+
+def _terrain_layout_to_ordered_dict(terrain_layout, expected_count=None):
+    """
+    根据名字列表生成有序的 sub_terrains 字典
+
+    Args:
+        terrain_layout: 地形名字列表，如 ["perlin_rough", "pyramid_stairs", ...]
+                       每个元素对应一个格子，重复的名字表示重复该地形
+        expected_count: 期望的元素数量（num_rows * num_cols），用于验证
+
+    Returns:
+        OrderedDict，key 是原始地形名字（重复会被覆盖），value 是对应配置
+
+    Raises:
+        ValueError: 如果 terrain_layout 长度与 expected_count 不匹配
+    """
+    from collections import OrderedDict
+
+    actual_count = len(terrain_layout)
+    if expected_count is not None and actual_count != expected_count:
+        raise ValueError(
+            f"terrain_layout 元素数量不匹配！"
+            f"提供了 {actual_count} 个，但需要 {expected_count} 个 (num_rows * num_cols)。"
+            f"当前 num_rows * num_cols = {expected_count}，请确保列表长度一致。"
+        )
+
+    result = OrderedDict()
+    for idx, name in enumerate(terrain_layout):
+        if name not in SHARED_SUB_TERRAINS:
+            raise ValueError(f"未知的地形名称: '{name}'。可用的地形: {list(SHARED_SUB_TERRAINS.keys())}")
+        result[name] = _terrain_with_sampling(name, enabled=False)
+    return result
 
 
 # ====================================================================
@@ -114,8 +141,8 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
                 num_patches=10,
                 patch_radius=[0.05, 0.10, 0.15, 0.20],
                 max_height_diff=0.1,
-                x_range=(1.0, 3.0),          # 采样区域x范围
-                y_range=(-1.0, 1.0),          # 采样区域y范围
+                x_range=(-0.5, 0.5),
+                y_range=(-0.5, 0.5),
             ),
         },
     ),
@@ -144,8 +171,8 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
                 num_patches=10,
                 patch_radius=[0.05, 0.10, 0.15, 0.20],
                 max_height_diff=0.1,
-                x_range=(1.0, 3.0),
-                y_range=(-1.0, 1.0),
+                x_range=(-0.5, 0.5),
+                y_range=(-0.5, 0.5),
             ),
         },
     ),
@@ -173,8 +200,8 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
                 num_patches=10,
                 patch_radius=[0.05, 0.10, 0.15, 0.20],
                 max_height_diff=0.1,
-                x_range=(1.0, 3.0),
-                y_range=(-1.0, 1.0),
+                x_range=(-0.5, 0.5),
+                y_range=(-0.5, 0.5),
             ),
         },
     ),
@@ -506,6 +533,8 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
 # vis.py 用的地形配置 - 用于可视化
 # ====================================================================
 # MY_TERRAIN_CFG 用于 vis.py，显示选择的6种地形
+# 使用 terrain_layout 指定每个格子的地形类型（按名字）
+# num_rows=4, num_cols=6 -> 24个格子，terrain_layout 需要24个元素
 
 MY_TERRAIN_CFG = FiledTerrainGeneratorCfg(
     class_type=FiledTerrainGenerator,
@@ -519,19 +548,12 @@ MY_TERRAIN_CFG = FiledTerrainGeneratorCfg(
     slope_threshold=1.0,
     use_cache=False,
     curriculum=False,
-    sub_terrains={
-        "perlin_rough": _terrain_with_sampling("perlin_rough", enabled=True, num_patches=10),
-        # "square_gaps": _terrain_with_sampling("square_gaps", enabled=False),
-        # "pyramid_stairs": _terrain_with_sampling("pyramid_stairs", enabled=False),
-        # "pyramid_stairs_inv": _terrain_with_sampling("pyramid_stairs_inv", enabled=False),
-        # "discrete_obstacles": _terrain_with_sampling("discrete_obstacles", enabled=False),
-        # "pyramid_slope": _terrain_with_sampling("pyramid_slope", enabled=False),
-        # "pyramid_slope_inv": _terrain_with_sampling("pyramid_slope_inv", enabled=False),
-        # "wave": _terrain_with_sampling("wave", enabled=False),
-        # "stepping_stones": _terrain_with_sampling("stepping_stones", enabled=False),
-        # "parapet": _terrain_with_sampling("parapet", enabled=False),
-        # "gutter": _terrain_with_sampling("gutter", enabled=False),
-    },
+    sub_terrains=_terrain_layout_to_ordered_dict([
+        "perlin_rough", "square_gaps", "pyramid_stairs", "pyramid_stairs_inv", "discrete_obstacles", "pyramid_slope",
+        "perlin_rough", "square_gaps", "pyramid_stairs", "pyramid_stairs_inv", "discrete_obstacles", "pyramid_slope",
+        "pyramid_slope_inv", "wave", "stepping_stones", "parapet", "gutter", "perlin_rough",
+        "pyramid_slope_inv", "wave", "stepping_stones", "parapet", "gutter", "perlin_rough",
+    ], expected_count=4*6),
 )
 
 

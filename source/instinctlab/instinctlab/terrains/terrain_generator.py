@@ -14,42 +14,49 @@ class FiledTerrainGenerator(TerrainGenerator):
     def __init__(self, cfg: FiledTerrainGeneratorCfg, device: str = "cpu"):
         print(f"[InstinctLab FiledTerrainGenerator] __init__ called! cfg type: {type(cfg)} id={id(self)}")
         self._subterrain_specific_cfgs: list[SubTerrainBaseCfg] = []
-        super().__init__(cfg, device)
-        print(f"[InstinctLab FiledTerrainGenerator] after super().__init__, subterrain_specific_cfgs len={len(self._subterrain_specific_cfgs)}")
-        # 一次到位：patch阶段分配地形名并append到subterrain_specific_cfgs，训练阶段只用patch_cfgs
+        self._orig_sub_terrains = {}
+        # 先遍历sub_terrains，强制patch_cfg.name = patch_key，保存到_orig_sub_terrains
         if hasattr(cfg, 'sub_terrains') and isinstance(cfg.sub_terrains, dict):
-            print("[DEBUG] 自动生成patch，遍历sub_terrains:")
             for patch_key, patch_cfg in cfg.sub_terrains.items():
-                # 强制 patch_cfg.name = patch_key
                 try:
                     patch_cfg.name = patch_key
                 except Exception:
                     object.__setattr__(patch_cfg, "name", patch_key)
-                print(f"[DEBUG][PATCH] patch_key={patch_key}, patch_cfg.name={getattr(patch_cfg, 'name', None)}, patch_cfg type={type(patch_cfg)}")
-                self._generate_subterrain(patch_key, patch_cfg)
-                self._subterrain_specific_cfgs.append(patch_cfg)
+                self._orig_sub_terrains[patch_key] = patch_cfg
+        # 再调用父类，父类会在内部使用cfg.sub_terrains生成terrain
+        super().__init__(cfg, device)
+        print(f"[InstinctLab FiledTerrainGenerator] after super().__init__, subterrain_specific_cfgs len={len(self._subterrain_specific_cfgs)}")
 
     def _get_terrain_mesh(self, difficulty: float, cfg: SubTerrainBaseCfg):
         mesh, origin = super()._get_terrain_mesh(difficulty, cfg)
-        cfg = cfg.copy()
-        cfg.difficulty = float(difficulty)
-        cfg.seed = self.cfg.seed
-        # 优先用 cfg.name，再用 _current_subterrain_name，最后兜底
-        name = getattr(cfg, "name", None)
-        if name is None or (isinstance(name, str) and name.strip() == ""):
-            name = getattr(self, "_current_subterrain_name", None)
-        if name is None or (isinstance(name, str) and name.strip() == ""):
-            name = "unknown"
-        if name == "unknown":
-            name = f"auto_{getattr(cfg, 'proportion', 'p')}_{getattr(cfg, 'platform_width', 'pw')}_{getattr(cfg, 'border_width', 'bw')}"
-            print(f"[DEBUG] name==unknown, 兜底生成: {name}")
-        try:
-            cfg.name = name
-        except Exception:
-            object.__setattr__(cfg, "name", name)
-        print(f"[FiledTerrainGenerator] cfg.name={cfg.name}, 来源: _current_subterrain_name={getattr(self, '_current_subterrain_name', None)}, cfg.name={getattr(cfg, 'name', None)}")
-        # 不再 append 到 subterrain_specific_cfgs，保证只保存 patch阶段的 cfg
         return mesh, origin
+
+    def _add_sub_terrain(
+        self, mesh: trimesh.Trimesh, origin: np.ndarray, row: int, col: int, sub_terrain_cfg: SubTerrainBaseCfg
+    ):
+        cfg_params = (
+            getattr(sub_terrain_cfg, 'proportion', None),
+            getattr(sub_terrain_cfg, 'platform_width', None),
+            getattr(sub_terrain_cfg, 'border_width', None),
+            type(sub_terrain_cfg).__name__,
+        )
+        original_name = None
+        for patch_key, patch_cfg in self._orig_sub_terrains.items():
+            patch_params = (
+                getattr(patch_cfg, 'proportion', None),
+                getattr(patch_cfg, 'platform_width', None),
+                getattr(patch_cfg, 'border_width', None),
+                type(patch_cfg).__name__,
+            )
+            if cfg_params == patch_params:
+                original_name = patch_key
+                break
+        if original_name is not None:
+            try:
+                sub_terrain_cfg.name = original_name
+            except Exception:
+                object.__setattr__(sub_terrain_cfg, "name", original_name)
+        super()._add_sub_terrain(mesh, origin, row, col, sub_terrain_cfg)
 
     def _generate_subterrain(self, name, cfg, *args, **kwargs):
         # 记录当前subterrain的名字，供_get_terrain_mesh用
