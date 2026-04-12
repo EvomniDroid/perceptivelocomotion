@@ -494,6 +494,8 @@ def main():
                 try:
                     env_origins_debug = raw_env.scene.env_origins[0].cpu().numpy() if hasattr(raw_env.scene, 'env_origins') else np.array([0.0, 0.0, 0.0])
                     print(f"[DEBUG] env_origins: ({env_origins_debug[0]:.2f}, {env_origins_debug[1]:.2f})")
+                    root_state_debug = inner_env.scene['robot'].data.default_root_state[0].cpu().numpy()
+                    print(f"[DEBUG] default_root_state[0]: ({root_state_debug[0]:.2f}, {root_state_debug[1]:.2f}, {root_state_debug[2]:.2f})")
                 except Exception as e:
                     print(f"[DEBUG] 获取 env_origins 失败: {e}")
 

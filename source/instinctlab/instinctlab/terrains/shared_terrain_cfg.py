@@ -167,7 +167,7 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
             "target": FlatPatchSamplingCfg(
                 num_patches=10,
                 patch_radius=[0.05, 0.10, 0.15, 0.20],
-                max_height_diff=0.3,
+                max_height_diff=0.5,
                 x_range=(-0.5, 0.5),
                 y_range=(-0.5, 0.5),
             ),
@@ -196,7 +196,7 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
             "target": FlatPatchSamplingCfg(
                 num_patches=10,
                 patch_radius=[0.05, 0.10, 0.15, 0.20],
-                max_height_diff=0.3,
+                max_height_diff=0.5,
                 x_range=(-0.5, 0.5),
                 y_range=(-0.5, 0.5),
             ),
@@ -260,7 +260,7 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
     # 地形 7: 反向金字塔斜坡
     "pyramid_slope_inv": PerlinInvertedPyramidSlopedTerrainCfg(
         proportion=1.0,
-        slope_range=(5, 15),
+        slope_range=(3, 8),
         platform_width=1.0,
         border_width=0.3,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
@@ -444,7 +444,7 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         wall_opening_angle=(10, 30),
         wall_opening_width=(0.3, 0.6),
         border_width=0.3,
-        wall_prob=[0.8, 0.8, 0.8, 0.8],
+        wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_thickness=0.05,
         perlin_cfg=PerlinPlaneTerrainCfg(
             noise_scale=0.02,
@@ -458,12 +458,12 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
             "target": FlatPatchSamplingCfg(
                 num_patches=10,
                 patch_radius=[0.05, 0.10, 0.15, 0.20],
-                max_height_diff=0.1,
+                max_height_diff=0.3,
             ),
         },
     ),
 
-    # 地形 15: 倾斜坡道（参数不适合 2x2 terrain，暂用 perlin_rough）
+    # 地形 16: 倾斜坡道
     "tilted_ramp": PerlinTiltedRampTerrainCfg(
         proportion=1.0,
         tilt_angle=(5, 15),
@@ -489,12 +489,12 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
             "target": FlatPatchSamplingCfg(
                 num_patches=10,
                 patch_radius=[0.05, 0.10, 0.15, 0.20],
-                max_height_diff=0.1,
+                max_height_diff=0.3,
             ),
         },
     ),
 
-    # 地形 16: 十字石
+    # 地形 12: 十字石
     "cross_stone": PerlinCrossStoneTerrainCfg(
         proportion=1.0,
         stone_size=(0.2, 0.4),
@@ -518,7 +518,7 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
             "target": FlatPatchSamplingCfg(
                 num_patches=10,
                 patch_radius=[0.05, 0.10, 0.15, 0.20],
-                max_height_diff=0.1,
+                max_height_diff=0.5,
             ),
         },
     ),
@@ -547,36 +547,44 @@ MY_TERRAIN_CFG = FiledTerrainGeneratorCfg(
     use_cache=False,
     curriculum=False,
     terrain_layout=[
-        # 第 1 行：4 种地形
-        "perlin_rough",        # 粗糙地面
-        "square_gaps",         # 方形坑洞
-        "pyramid_stairs",      # 金字塔楼梯（上）
-        "pyramid_stairs_inv",  # 金字塔楼梯（下）
-        # 第 2 行：4 种地形
-        "discrete_obstacles",  # 离散障碍物
-        "pyramid_slope",       # 金字塔斜坡
-        "pyramid_slope_inv",   # 反向金字塔斜坡
-        "wave",                # 波浪地形
-        # 第 3 行：4 种地形
-        "stepping_stones",     # 踏脚石
-        "parapet",             # 矮墙
-        "gutter",              # 排水沟
-        "cross_stone",         # 十字石
-        # 第 4 行：4 种地形
-        "stairs_up_down",      # 上下楼梯
-        "stairs_down_up",      # 下上楼梯
-        "tilt",                # 倾斜墙壁
-        "tilted_ramp",         # 倾斜坡道
-        # 第 5-6 行：用粗糙地面填充
-        "stairs_up_down", "stairs_down_up", "stairs_up_down", "stairs_down_up",
-        "stairs_up_down", "stairs_down_up", "stairs_up_down", "perlin_rough",
+        # 第 1 行 (y=10~12): 终点区域
+        "perlin_rough",        # 1 (x=0~2)
+        "pyramid_slope",       # 2 (x=2~4)
+        "pyramid_stairs",      # 3 (x=4~6)
+        "perlin_rough",        # 4 (x=6~8)
+        # 第 2 行 (y=8~10)
+        "pyramid_stairs",      # 5 (x=0~2)
+        "pyramid_slope",       # 6 (x=2~4)
+        "discrete_obstacles",  # 7 (x=4~6)
+        "wave",                # 8 (x=6~8)
+        # 第 3 行 (y=6~8): 障碍区域
+        "discrete_obstacles",  # 9 (x=0~2)
+        "stepping_stones",     # 10 (x=2~4)
+        "pyramid_stairs",      # 11 (x=4~6)
+        "cross_stone",         # 12 (x=6~8)
+        # 第 4 行 (y=4~6)
+        "pyramid_stairs_inv",  # 13 (x=0~2)
+        "pyramid_slope",       # 14 (x=2~4)
+        "discrete_obstacles",  # 15 (x=4~6)
+        "wave",                # 16 (x=6~8)
+        # 第 5 行 (y=2~4)
+        "pyramid_stairs",      # 17 (x=0~2)
+        "pyramid_slope",       # 18 (x=2~4)
+        "wave",                # 19 (x=4~6)
+        "perlin_rough",        # 20 (x=6~8)
+        # 第 6 行 (y=0~2): 起点区域 - 出生点 (1,1)
+        "perlin_rough",        # 21 (x=0~2)
+        "discrete_obstacles",  # 22 (x=2~4)
+        "pyramid_stairs",      # 23 (x=4~6)
+        "pyramid_slope",       # 24 (x=6~8)
     ],
     sub_terrains=_terrain_layout_to_ordered_dict([
-        "perlin_rough", "square_gaps", "pyramid_stairs", "pyramid_stairs_inv", "discrete_obstacles", "pyramid_slope",
-        "pyramid_slope_inv", "wave", "stepping_stones", "parapet", "gutter", "cross_stone",
-        "stairs_up_down", "stairs_down_up", "tilt", "tilted_ramp",
-        "stairs_up_down", "stairs_down_up", "stairs_up_down", "stairs_down_up",
-        "stairs_up_down", "stairs_down_up", "stairs_up_down", "perlin_rough",
+        "perlin_rough", "pyramid_slope", "pyramid_stairs", "perlin_rough",
+        "pyramid_stairs", "pyramid_slope", "discrete_obstacles", "wave",
+        "discrete_obstacles", "stepping_stones", "pyramid_stairs", "cross_stone",
+        "pyramid_stairs_inv", "pyramid_slope", "discrete_obstacles", "wave",
+        "pyramid_stairs", "pyramid_slope", "wave", "perlin_rough",
+        "perlin_rough", "discrete_obstacles", "pyramid_stairs", "pyramid_slope",
     ], expected_count=6*4),
 )
 
