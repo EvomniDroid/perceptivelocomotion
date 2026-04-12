@@ -176,8 +176,8 @@ class MotionPlanner:
             init_yaw = robot_yaw if robot_yaw is not None else 0.0
             print(f"[规划] 记录起始位置: ({rx:.2f}, {ry:.2f}), 朝向: {math.degrees(init_yaw):.1f}°")
 
-        tx = self.init_pos[0] + self.target_pos[0]
-        ty = self.init_pos[1] + self.target_pos[1]
+        tx = self.target_pos[0]
+        ty = self.target_pos[1]
 
         dx = tx - rx
         dy = ty - ry
@@ -231,33 +231,8 @@ def main():
         print("[INFO] 使用vis地形配置进行泛化测试 (MY_TERRAIN_CFG)")
         env_cfg.scene.terrain.terrain_generator = MY_TERRAIN_CFG
         env_cfg.scene.terrain.curriculum = False
-
-    spawn_pos_str = getattr(args_cli, 'spawn_pos', None)
-    if spawn_pos_str:
-        try:
-            parts = [float(x) for x in spawn_pos_str.split(',')]
-            if len(parts) >= 2:
-                spawn_x, spawn_y = parts[0], parts[1]
-                spawn_yaw = parts[2] if len(parts) > 2 else 0.0
-                print(f"[INFO] spawn_pos: ({spawn_x}, {spawn_y}, yaw={spawn_yaw})")
-                if hasattr(env_cfg.scene, 'robot') and hasattr(env_cfg.scene.robot, 'init_state'):
-                    env_cfg.scene.robot.init_state.pos = (spawn_x, spawn_y, 0.9)
-                    print(f"[INFO] 已设置 robot.init_state.pos = {env_cfg.scene.robot.init_state.pos}")
-                if hasattr(env_cfg.events, 'reset_base') and env_cfg.events.reset_base is not None:
-                    env_cfg.events.reset_base.params["pose_range"] = {
-                        "x": (0, 0),
-                        "y": (0, 0),
-                        "yaw": (0, 0),
-                    }
-                    env_cfg.events.reset_base.params["velocity_range"] = {
-                        "x": (0, 0), "y": (0, 0), "z": (0, 0),
-                        "roll": (0, 0), "pitch": (0, 0), "yaw": (0, 0),
-                    }
-                    print("[INFO] 已设置 reset_base 为零偏移")
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print(f"[WARN] spawn_pos 解析失败: {e}")
+        env_cfg.scene.env_spacing = 0.0
+        print("[INFO] env_spacing=0, env_origins 将全部为 (0,0,0)，坐标系统一")
 
     if getattr(args_cli, 'debug_ray', False):
         if hasattr(env_cfg.scene, 'left_height_scanner'):
@@ -313,12 +288,65 @@ def main():
     print(f"[INFO] 日志目录: {log_dir}")
     print(f"[INFO] 恢复路径: {resume_path}")
 
+    print("[DEBUG] 1. gym.make 之前")
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if getattr(args_cli, 'video', False) else None)
+    print("[DEBUG] 2. gym.make 完成")
+    print("[DEBUG] 3. 准备访问 env.unwrapped...")
+    tmp = env.unwrapped
+    print(f"[DEBUG] 3b. env.unwrapped 类型: {type(tmp).__name__}")
+
+    spawn_pos_str = getattr(args_cli, 'spawn_pos', None)
+    print(f"[DEBUG] 4. spawn_pos_str = {spawn_pos_str}")
 
     if isinstance(env.unwrapped, DirectMARLEnv):
         env = multi_agent_to_single_agent(env)
+    print("[DEBUG] 5. multi_agent_to_single_agent 完成")
+
+    inner_env = env.unwrapped
+    print(f"[DEBUG] 6. 获取 inner_env = {type(inner_env).__name__}")
+    loop_count = 0
+    while hasattr(inner_env, 'unwrapped') and loop_count < 10:
+        next_env = inner_env.unwrapped
+        if next_env is inner_env:
+            print(f"[DEBUG] 6b. unwrapped 返回自身，停止")
+            break
+        inner_env = next_env
+        print(f"[DEBUG] 6b. inner_env = {type(inner_env).__name__}")
+        loop_count += 1
+    print(f"[DEBUG] 6c. 最终 inner_env = {type(inner_env).__name__}")
+
+    print(f"[DEBUG] 6d. hasattr(inner_env, 'scene') = {hasattr(inner_env, 'scene')}")
+    if hasattr(inner_env, 'scene'):
+        scene_keys = list(inner_env.scene.keys()) if hasattr(inner_env.scene, 'keys') else dir(inner_env.scene)
+        print(f"[DEBUG] 6e. scene keys = {scene_keys}")
+        has_robot = hasattr(inner_env.scene, 'robot')
+        print(f"[DEBUG] 6f. hasattr(inner_env.scene, 'robot') = {has_robot}")
+
+    if spawn_pos_str:
+        try:
+            if hasattr(inner_env, 'scene'):
+                try:
+                    robot = inner_env.scene['robot']
+                    parts = [float(x) for x in spawn_pos_str.split(',')]
+                    spawn_x, spawn_y = parts[0], parts[1]
+                    root_state = robot.data.default_root_state.clone()
+                    print(f"[DEBUG] 7a. 修改前 default_root_state[0]: {root_state[0, :3]}")
+                    root_state[:, 0] = spawn_x
+                    root_state[:, 1] = spawn_y
+                    robot.data.default_root_state[:] = root_state
+                    print(f"[DEBUG] 7b. 修改后 default_root_state[0]: {root_state[0, :3]}")
+                    print(f"[DEBUG] 机器人位置已设置为 ({spawn_x}, {spawn_y})")
+                except KeyError as e:
+                    print(f"[WARN] inner_env.scene['robot'] 不存在: {e}")
+            else:
+                print(f"[WARN] inner_env 没有 scene 属性，跳过 spawn_pos 设置")
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"[WARN] spawn_pos 设置失败: {e}")
 
     env = InstinctRlVecEnvWrapper(env)
+    print("[DEBUG] 7. InstinctRlVecEnvWrapper 完成")
 
     ppo_runner = None
     if getattr(args_cli, 'vel_debug', False):
@@ -458,15 +486,27 @@ def main():
                 fall_rate = 0.0
                 terrain_name = "unknown"
 
+            if timestep == 0:
+                print(f"[DEBUG] ===== 部署开始 =====")
+                print(f"[DEBUG] target_pos: ({target_pos[0]}, {target_pos[1]})")
+                print(f"[DEBUG] spawn_pos: {spawn_pos_str}")
+                print(f"[DEBUG] env_spacing: {env_cfg.scene.env_spacing}")
+                try:
+                    env_origins_debug = raw_env.scene.env_origins[0].cpu().numpy() if hasattr(raw_env.scene, 'env_origins') else np.array([0.0, 0.0, 0.0])
+                    print(f"[DEBUG] env_origins: ({env_origins_debug[0]:.2f}, {env_origins_debug[1]:.2f})")
+                except Exception as e:
+                    print(f"[DEBUG] 获取 env_origins 失败: {e}")
+
             robot_pos = None
             robot_yaw = None
             try:
                 robot_entity = env_scene["robot"]
                 root_pos = robot_entity.data.root_link_pos_w
                 root_quat = robot_entity.data.root_quat_w
+                env_origins = raw_env.scene.env_origins[0].cpu().numpy() if hasattr(raw_env.scene, 'env_origins') else np.array([0.0, 0.0, 0.0])
                 if torch.is_tensor(root_pos) and torch.is_tensor(root_quat):
-                    rx = root_pos[0, 0].item()
-                    ry = root_pos[0, 1].item()
+                    rx = root_pos[0, 0].item() - env_origins[0]
+                    ry = root_pos[0, 1].item() - env_origins[1]
                     robot_pos = (rx, ry)
                     q = root_quat[0]
                     w, x, y, z = q[0].item(), q[1].item(), q[2].item(), q[3].item()
@@ -480,6 +520,8 @@ def main():
             if timestep % 100 == 0:
                 pos_str = f"({robot_pos[0]:.2f}, {robot_pos[1]:.2f})" if robot_pos else "N/A"
                 print(f"[t={timestep}] pos={pos_str} | 地形: {terrain_name} | 摔倒率: {fall_rate:.3f}")
+                if timestep == 0 and robot_pos:
+                    print(f"[DEBUG] 机器人实际位置: ({robot_pos[0]:.2f}, {robot_pos[1]:.2f})")
 
             if emergency_stop:
                 if timestep == 0:
