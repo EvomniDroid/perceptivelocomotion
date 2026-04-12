@@ -568,15 +568,15 @@ MY_TERRAIN_CFG = FiledTerrainGeneratorCfg(
         "tilt",                # 倾斜墙壁
         "tilted_ramp",         # 倾斜坡道
         # 第 5-6 行：用粗糙地面填充
-        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
-        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+        "stairs_up_down", "stairs_down_up", "stairs_up_down", "stairs_down_up",
+        "stairs_up_down", "stairs_down_up", "stairs_up_down", "perlin_rough",
     ],
     sub_terrains=_terrain_layout_to_ordered_dict([
         "perlin_rough", "square_gaps", "pyramid_stairs", "pyramid_stairs_inv", "discrete_obstacles", "pyramid_slope",
         "pyramid_slope_inv", "wave", "stepping_stones", "parapet", "gutter", "cross_stone",
         "stairs_up_down", "stairs_down_up", "tilt", "tilted_ramp",
-        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
-        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+        "stairs_up_down", "stairs_down_up", "stairs_up_down", "stairs_down_up",
+        "stairs_up_down", "stairs_down_up", "stairs_up_down", "perlin_rough",
     ], expected_count=6*4),
 )
 

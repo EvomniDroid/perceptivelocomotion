@@ -240,20 +240,23 @@ def main():
                 spawn_x, spawn_y = parts[0], parts[1]
                 spawn_yaw = parts[2] if len(parts) > 2 else 0.0
                 print(f"[INFO] spawn_pos: ({spawn_x}, {spawn_y}, yaw={spawn_yaw})")
+                if hasattr(env_cfg.scene, 'robot') and hasattr(env_cfg.scene.robot, 'init_state'):
+                    env_cfg.scene.robot.init_state.pos = (spawn_x, spawn_y, 0.9)
+                    print(f"[INFO] 已设置 robot.init_state.pos = {env_cfg.scene.robot.init_state.pos}")
                 if hasattr(env_cfg.events, 'reset_base') and env_cfg.events.reset_base is not None:
                     env_cfg.events.reset_base.params["pose_range"] = {
-                        "x": (spawn_x, spawn_x),
-                        "y": (spawn_y, spawn_y),
-                        "yaw": (spawn_yaw, spawn_yaw),
+                        "x": (0, 0),
+                        "y": (0, 0),
+                        "yaw": (0, 0),
                     }
                     env_cfg.events.reset_base.params["velocity_range"] = {
                         "x": (0, 0), "y": (0, 0), "z": (0, 0),
                         "roll": (0, 0), "pitch": (0, 0), "yaw": (0, 0),
                     }
-                    print("[INFO] 已设置固定出生位置")
-                else:
-                    print("[WARN] reset_base 不存在，无法设置出生位置")
+                    print("[INFO] 已设置 reset_base 为零偏移")
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             print(f"[WARN] spawn_pos 解析失败: {e}")
 
     if getattr(args_cli, 'debug_ray', False):
