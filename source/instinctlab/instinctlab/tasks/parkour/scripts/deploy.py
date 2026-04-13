@@ -147,12 +147,12 @@ class MotionPlanner:
         if not vel_debug:
             return obs
 
-        vel_x, vel_y, ang_z = self._get_blended_velocity(keyboard_command)
+        vel_x, vel_y, ang_z = self._get_blended_velocity(keyboard_command, robot_pos, robot_yaw, timestep)
         obs = self._inject_velocity(obs, command_obs_slice, vel_x, vel_y, ang_z)
         return obs
 
-    def _get_blended_velocity(self, keyboard_command):
-        """混合速度选择：键盘优先，无键盘输入则用默认规划（一直往前）"""
+    def _get_blended_velocity(self, keyboard_command, robot_pos=None, robot_yaw=None, timestep=None):
+        """混合速度选择：键盘优先，无键盘输入则用 Pure Pursuit 导航到 target_pos"""
         if keyboard_command is not None:
             kx = keyboard_command[0, 0].item()
             ky = keyboard_command[0, 1].item()
@@ -161,6 +161,9 @@ class MotionPlanner:
                 self._keyboard_active = True
                 print(f"[规划] 键盘接管: vel_x={kx:.2f}, vel_y={ky:.2f}, ang_z={kz:.2f}")
                 return kx, ky, kz
+
+        if robot_pos is not None and self.target_pos is not None:
+            return self._position_to_velocity(robot_pos, robot_yaw, timestep=timestep)
 
         vel_x = self.debug_vels.get("vel_x", 0.5)
         vel_y = self.debug_vels.get("vel_y", 0.0)
