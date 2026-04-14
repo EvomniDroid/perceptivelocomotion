@@ -567,8 +567,11 @@ def main():
                 frontier_interval = getattr(args_cli, 'frontier_interval', 100)
                 if timestep % frontier_interval == 0:
                     explored_mask = fall_rate_map.get_explored_mask()
-                    frontiers = frontier_detector.detect_frontiers_in_fov(
-                        explored_mask, robot_pos[0], robot_pos[1], robot_yaw if robot_yaw else 0.0
+                    height_map = fall_rate_map.get_height_map()
+                    height_count_map = fall_rate_map.get_height_count_map()
+                    frontiers = frontier_detector.detect_frontiers_by_layer(
+                        explored_mask, robot_pos[0], robot_pos[1], robot_yaw if robot_yaw else 0.0,
+                        height_map=height_map, height_count_map=height_count_map
                     )
                     frontier_vis_data.append({
                         'timestep': timestep,
@@ -577,20 +580,30 @@ def main():
                         'explored_mask': explored_mask.copy(),
                     })
                     print(f"[前沿] t={timestep} pos=({robot_pos[0]:.2f},{robot_pos[1]:.2f}) explored={explored_mask.sum()} 前沿数={len(frontiers)}")
-                    for i, (fx, fy, fw) in enumerate(frontiers[:3]):
-                        dist = math.sqrt((fx-robot_pos[0])**2 + (fy-robot_pos[1])**2)
-                        angle = math.degrees(math.atan2(fy-robot_pos[1], fx-robot_pos[0]))
-                        print(f"  [{i}] world=({fx:.2f},{fy:.2f}) dist={dist:.2f}m angle={angle:.1f}° conf={fw:.2f}")
+                    for i, f in enumerate(frontiers[:5]):
+                        print(f"  [L{f['layer']}] world=({f['x']:.2f},{f['y']:.2f}) dist={f['dist']:.2f}m h={f['height']:.2f}m conf={f['conf']:.2f}")
                     frontier_save_interval = getattr(args_cli, 'frontier_save_interval', 500)
                     if frontier_save_interval > 0 and timestep % frontier_save_interval == 0 and frontier_vis_data:
                         import json
                         vis_file = os.path.join(frontier_save_dir, f"frontier_vis_t{timestep}.json")
                         serializable_data = []
                         for d in frontier_vis_data[-10:]:
+                            serializable_frontiers = []
+                            for f in d['frontiers']:
+                                serializable_frontiers.append({
+                                    'layer': int(f['layer']),
+                                    'dist': float(f['dist']),
+                                    'x': float(f['x']),
+                                    'y': float(f['y']),
+                                    'conf': float(f['conf']),
+                                    'height': float(f['height']),
+                                    'near_depth': float(f['near_depth']),
+                                    'far_depth': float(f['far_depth']),
+                                })
                             serializable_data.append({
                                 'timestep': int(d['timestep']),
                                 'robot_pos': (float(d['robot_pos'][0]), float(d['robot_pos'][1])),
-                                'frontiers': [(float(fx), float(fy), float(fw)) for fx, fy, fw in d['frontiers']],
+                                'frontiers': serializable_frontiers,
                             })
                         with open(vis_file, 'w') as f:
                             json.dump(serializable_data, f)
