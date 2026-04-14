@@ -23,6 +23,9 @@ parser.add_argument("--termination_mode", type=str, default="full", help="终止
 parser.add_argument("--debug_ray", action="store_true", default=False, help="启用射线检测可视化")
 parser.add_argument("--target_pos", type=str, default=None, help="目标位置(x,y)，例如2.0,2.0，单位米")
 parser.add_argument("--spawn_pos", type=str, default=None, help="出生位置(x,y)，例如0.0,0.0，单位米，默认随机")
+parser.add_argument("--frontier_debug", action="store_true", default=False, help="启用前沿点检测调试")
+parser.add_argument("--frontier_interval", type=int, default=100, help="前沿点打印间隔")
+parser.add_argument("--frontier_save_interval", type=int, default=500, help="前沿点数据保存间隔")
 
 sys.path.append(os.path.join(os.getcwd(), "scripts", "instinct_rl"))
 import cli_args
@@ -31,8 +34,7 @@ cli_args.add_instinct_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
-if getattr(args_cli, 'video', False):
-    args_cli.enable_cameras = True
+args_cli.enable_cameras = True
 
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -57,6 +59,7 @@ from instinctlab.terrains.shared_terrain_cfg import MY_TERRAIN_CFG
 sys.path.append("/home/zh/isaac/liveratemodel")
 from model import create_model
 from dataset import LABEL_TO_FALL_RATE, LABEL_TO_TERRAIN, build_model_input_from_depth_array, get_input_channels
+from local_planner import LocalFallRateMap, FrontierDetector
 import torch.nn.functional as F
 
 
@@ -153,13 +156,15 @@ class MotionPlanner:
 
     def _get_blended_velocity(self, keyboard_command, robot_pos=None, robot_yaw=None, timestep=None):
         """混合速度选择：键盘优先，无键盘输入则用 Pure Pursuit 导航到 target_pos"""
+        log_interval = 100
         if keyboard_command is not None:
             kx = keyboard_command[0, 0].item()
             ky = keyboard_command[0, 1].item()
             kz = keyboard_command[0, 2].item()
             if self._keyboard_active or abs(kx) > 0.01 or abs(ky) > 0.01 or abs(kz) > 0.01:
                 self._keyboard_active = True
-                print(f"[规划] 键盘接管: vel_x={kx:.2f}, vel_y={ky:.2f}, ang_z={kz:.2f}")
+                if timestep is None or timestep % log_interval == 0:
+                    print(f"[规划] 键盘接管: vel_x={kx:.2f}, vel_y={ky:.2f}, ang_z={kz:.2f}")
                 return kx, ky, kz
 
         if robot_pos is not None and self.target_pos is not None:
@@ -398,9 +403,31 @@ def main():
         target_pos=target_pos
     )
 
+    fall_rate_map = LocalFallRateMap(
+        map_size=200,
+        cell_size=0.05,
+        max_depth=2.5,
+        fov=87.0,
+        focal_length=400.0,
+        horizontal_aperture=640.0,
+    )
+    frontier_detector = FrontierDetector(
+        map_size=200,
+        cell_size=0.05,
+        fov=87.0,
+        max_depth=2.5,
+    )
+
+    frontier_vis_data = []
+    save_depth_dir = None
     command_obs_slice = get_obs_slice(env.get_obs_segments(), "velocity_commands")
 
+    import datetime
     run_id = np.random.randint(10000)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    frontier_save_dir = os.path.join(log_dir, "frontier", f"run_{timestamp}_{run_id}")
+    os.makedirs(frontier_save_dir, exist_ok=True)
+    print(f"[INFO] 前沿数据保存目录: {frontier_save_dir}")
     save_depth_dir = None
     if getattr(args_cli, 'save_depth_interval', 0) > 0:
         save_depth_dir = os.path.join(log_dir, f"deploy_depth_{run_id}")
@@ -471,14 +498,18 @@ def main():
     try:
         while True:
             depth_np = None
-
             try:
                 depth_data = raw_env.scene["camera"].data.output["distance_to_image_plane"]
+                if timestep % 200 == 0:
+                    print(f"[DEBUG] depth_data type={type(depth_data)}, len={len(depth_data) if hasattr(depth_data, '__len__') else 'N/A'}")
                 if depth_data is not None and len(depth_data) > 0:
                     depth_np = depth_data[0].cpu().numpy()
                     if depth_np.ndim == 3:
                         depth_np = depth_np.squeeze(-1)
                     depth_np = np.nan_to_num(depth_np, nan=0.0, posinf=10.0, neginf=0.0)
+                else:
+                    if timestep % 200 == 0:
+                        print(f"[DEBUG] 深度数据为空或无效")
             except Exception as e:
                 if timestep % 200 == 0:
                     print(f"[DEBUG] 获取深度图失败: {e}")
@@ -520,6 +551,51 @@ def main():
                 if timestep % 200 == 0:
                     print(f"[DEBUG] 获取位置失败: {e}")
 
+            if getattr(args_cli, 'frontier_debug', False) and robot_pos is not None:
+                frontier_debug_print = timestep % 200 == 0
+                if depth_np is not None:
+                    if frontier_debug_print:
+                        print(f"[DEBUG] depth_np shape={depth_np.shape}, dtype={depth_np.dtype}, min={depth_np.min():.3f}, max={depth_np.max():.3f}")
+                    fall_rate_map.update_map(
+                        depth_np, fall_rate, robot_pos[0], robot_pos[1], robot_yaw if robot_yaw else 0.0
+                    )
+                    if frontier_debug_print:
+                        print(f"[DEBUG] after update_map explored_sum={fall_rate_map.get_explored_mask().sum()}")
+                else:
+                    if frontier_debug_print:
+                        print(f"[前沿 DEBUG] depth_np=None, explored_sum={fall_rate_map.get_explored_mask().sum()}")
+                frontier_interval = getattr(args_cli, 'frontier_interval', 100)
+                if timestep % frontier_interval == 0:
+                    explored_mask = fall_rate_map.get_explored_mask()
+                    frontiers = frontier_detector.detect_frontiers_in_fov(
+                        explored_mask, robot_pos[0], robot_pos[1], robot_yaw if robot_yaw else 0.0
+                    )
+                    frontier_vis_data.append({
+                        'timestep': timestep,
+                        'robot_pos': (robot_pos[0], robot_pos[1]),
+                        'frontiers': frontiers,
+                        'explored_mask': explored_mask.copy(),
+                    })
+                    print(f"[前沿] t={timestep} pos=({robot_pos[0]:.2f},{robot_pos[1]:.2f}) explored={explored_mask.sum()} 前沿数={len(frontiers)}")
+                    for i, (fx, fy, fw) in enumerate(frontiers[:3]):
+                        dist = math.sqrt((fx-robot_pos[0])**2 + (fy-robot_pos[1])**2)
+                        angle = math.degrees(math.atan2(fy-robot_pos[1], fx-robot_pos[0]))
+                        print(f"  [{i}] world=({fx:.2f},{fy:.2f}) dist={dist:.2f}m angle={angle:.1f}° conf={fw:.2f}")
+                    frontier_save_interval = getattr(args_cli, 'frontier_save_interval', 500)
+                    if frontier_save_interval > 0 and timestep % frontier_save_interval == 0 and frontier_vis_data:
+                        import json
+                        vis_file = os.path.join(frontier_save_dir, f"frontier_vis_t{timestep}.json")
+                        serializable_data = []
+                        for d in frontier_vis_data[-10:]:
+                            serializable_data.append({
+                                'timestep': int(d['timestep']),
+                                'robot_pos': (float(d['robot_pos'][0]), float(d['robot_pos'][1])),
+                                'frontiers': [(float(fx), float(fy), float(fw)) for fx, fy, fw in d['frontiers']],
+                            })
+                        with open(vis_file, 'w') as f:
+                            json.dump(serializable_data, f)
+                        print(f"[INFO] 前沿可视化数据已保存: {vis_file}")
+
             obs = planner.get_action(obs, fall_rate, terrain_name, command_obs_slice, vel_debug=getattr(args_cli, 'vel_debug', False), keyboard_command=keyboard_command if getattr(args_cli, 'keyboard_control', False) else None, robot_pos=robot_pos, robot_yaw=robot_yaw, timestep=timestep)
 
             if timestep % 100 == 0:
@@ -545,6 +621,37 @@ def main():
 
     env.close()
     print("[INFO] 部署完成")
+
+    if frontier_vis_data:
+        import json
+        vis_file = os.path.join(log_dir, f"frontier_vis_{run_id}.json")
+        with open(vis_file, 'w') as f:
+            json.dump([
+                {k: v for k, v in d.items() if k != 'explored_mask'}
+                for d in frontier_vis_data
+            ], f)
+        print(f"[INFO] 前沿可视化数据已保存: {vis_file}")
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+            for d in frontier_vis_data:
+                rx, ry = d['robot_pos']
+                for fx, fy, fw in d['frontiers']:
+                    ax.plot([rx, fx], [ry, fy], 'b-', alpha=0.3, linewidth=0.5)
+                ax.scatter(rx, ry, c='green', s=100, marker='^')
+                ax.scatter([fx for fx, fy, fw in d['frontiers']],
+                          [fy for fx, fy, fw in d['frontiers']], c='red', s=20, alpha=0.5)
+            ax.set_aspect('equal')
+            ax.set_xlabel('X (m)')
+            ax.set_ylabel('Y (m)')
+            ax.set_title('Frontier Detection (green=robot, red=frontiers)')
+            ax.grid(True)
+            fig.savefig(vis_file.replace('.json', '.png'), dpi=150)
+            print(f"[INFO] 前沿可视化图已保存: {vis_file.replace('.json', '.png')}")
+        except Exception as e:
+            print(f"[WARN] 可视化失败: {e}")
 
 
 if __name__ == "__main__":
