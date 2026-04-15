@@ -14,7 +14,8 @@ class FiledTerrainGenerator(TerrainGenerator):
     """A terrain generator that uses the filed generator."""
 
     def __init__(self, cfg: FiledTerrainGeneratorCfg, device: str = "cpu"):
-        print(f"[InstinctLab FiledTerrainGenerator] __init__ called! cfg type: {type(cfg)} id={id(self)}")
+        print(f"[InstinctLab FiledTerrainGenerator] __init__ called! cfg type: {type(cfg).__name__} id={id(self)}")
+        print(f"[InstinctLab FiledTerrainGenerator] __init__ cfg.id: {id(cfg)}")
         self._subterrain_specific_cfgs: list[SubTerrainBaseCfg] = []
         self._orig_sub_terrains = {}
         if hasattr(cfg, 'sub_terrains') and isinstance(cfg.sub_terrains, dict):

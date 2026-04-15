@@ -313,44 +313,39 @@ def main():
     print(f"[INFO] 恢复路径: {resume_path}")
 
     print("[DEBUG] 1. gym.make 之前")
-    print(f"[DEBUG] 1b. env_cfg.scene.terrain.terrain_generator = {type(env_cfg.scene.terrain.terrain_generator).__name__}")
-    print(f"[DEBUG] 1c. env_cfg.scene.terrain.terrain_generator.size = {env_cfg.scene.terrain.terrain_generator.size}")
-    print(f"[DEBUG] 1d. env_cfg.scene.env_spacing = {env_cfg.scene.env_spacing}")
+    print(f"[DEBUG] 1b. env_cfg.scene.terrain.terrain_generator type: {type(env_cfg.scene.terrain.terrain_generator).__name__}")
+    print(f"[DEBUG] 1c. env_cfg.scene.terrain.terrain_generator id: {id(env_cfg.scene.terrain.terrain_generator)}")
+    print(f"[DEBUG] 1d. env_cfg.scene.terrain.terrain_generator.size: {env_cfg.scene.terrain.terrain_generator.size}")
+    print(f"[DEBUG] 1e. env_cfg.scene.terrain.terrain_generator.num_rows: {env_cfg.scene.terrain.terrain_generator.num_rows}")
+    print(f"[DEBUG] 1f. env_cfg.scene.terrain.terrain_generator.num_cols: {env_cfg.scene.terrain.terrain_generator.num_cols}")
+    print(f"[DEBUG] 1g. env_cfg.scene.terrain.terrain_generator.seed: {env_cfg.scene.terrain.terrain_generator.seed}")
+    print(f"[DEBUG] 1h. env_cfg.scene.env_spacing: {env_cfg.scene.env_spacing}")
+    
+    import gc
+    gc.collect()
+    
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if getattr(args_cli, 'video', False) else None)
     print("[DEBUG] 2. gym.make 完成")
-    print(f"[DEBUG] 2b. env_cfg.scene.terrain.terrain_generator type: {type(env_cfg.scene.terrain.terrain_generator).__name__}")
-    print(f"[DEBUG] 2c. env_cfg.scene.terrain.terrain_generator.size: {env_cfg.scene.terrain.terrain_generator.size if hasattr(env_cfg.scene.terrain.terrain_generator, 'size') else 'N/A'}")
-    print(f"[DEBUG] 2d. env_cfg.scene.env_spacing: {env_cfg.scene.env_spacing}")
-
+    
     if getattr(args_cli, 'use_frontier_test_terrain', False) or getattr(args_cli, 'use_vis_terrain', False):
-        try:
-            raw_env = env.unwrapped
-            while hasattr(raw_env, 'unwrapped') and not hasattr(raw_env, 'scene'):
-                raw_env = raw_env.env
-            if hasattr(raw_env, 'scene') and hasattr(raw_env.scene, 'env_origins'):
-                actual_origins = raw_env.scene.env_origins[0].cpu().numpy()
-                print(f"[DEBUG] 2e. 当前 env_origins: {actual_origins}")
-                fixed_origins = np.array([-5.0, -3.0, 0.0])
-                if not np.allclose(actual_origins[:2], fixed_origins[:2], atol=0.1):
-                    origin_offset = fixed_origins - actual_origins
-                    print(f"[DEBUG] 2f. 强制重置 env_origins: {actual_origins} -> {fixed_origins}, offset={origin_offset}")
-                    with torch.no_grad():
-                        raw_env.scene.env_origins[:] = torch.tensor([fixed_origins], device=raw_env.device)
-                    try:
-                        robot = raw_env.scene['robot']
-                        current_root = robot.data.root_link_pos_w.clone()
-                        new_root = current_root + torch.tensor([origin_offset], device=current_root.device)
-                        robot.data.root_link_pos_w[:] = new_root
-                        print(f"[DEBUG] 2g. 机器人位置已调整: {current_root[0].cpu().numpy()} -> {new_root[0].cpu().numpy()}")
-                    except Exception as e:
-                        print(f"[DEBUG] 2g. 调整机器人位置失败: {e}")
-                else:
-                    print(f"[DEBUG] 2e. env_origins 已正确: {actual_origins}")
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print(f"[DEBUG] 2e. 重置 env_origins 失败: {e}")
-    print("[DEBUG] 3. 准备访问 env.unwrapped...")
+        print("[DEBUG] 2a. 强制设置固定的 env_origins 和 terrain_levels")
+        raw_env = env.unwrapped
+        while hasattr(raw_env, 'unwrapped') and not hasattr(raw_env, 'scene'):
+            raw_env = raw_env.unwrapped
+        if hasattr(raw_env, 'scene') and hasattr(raw_env.scene, 'env_origins'):
+            fixed_origins = np.array([[-5.0, -3.0, 0.0]])
+            with torch.no_grad():
+                raw_env.scene.env_origins[:] = torch.tensor(fixed_origins, device=raw_env.scene.env_origins.device)
+                if hasattr(raw_env.scene.terrain, 'terrain_levels'):
+                    raw_env.scene.terrain.terrain_levels[:] = 0
+                if hasattr(raw_env.scene.terrain, 'terrain_types'):
+                    raw_env.scene.terrain.terrain_types[:] = 0
+            print(f"[DEBUG] 2b. env_origins 已强制设置为: {fixed_origins}")
+            if hasattr(raw_env.scene.terrain, 'terrain_levels'):
+                print(f"[DEBUG] 2c. terrain_levels 已强制设置为: {raw_env.scene.terrain.terrain_levels.cpu().numpy()}")
+            if hasattr(raw_env.scene.terrain, 'terrain_types'):
+                print(f"[DEBUG] 2d. terrain_types 已强制设置为: {raw_env.scene.terrain.terrain_types.cpu().numpy()}")
+    print(f"[DEBUG] 3. 准备访问 env.unwrapped...")
     tmp = env.unwrapped
     print(f"[DEBUG] 3b. env.unwrapped 类型: {type(tmp).__name__}")
 
@@ -593,30 +588,6 @@ def main():
                 print(f"[DEBUG] target_pos: ({target_pos[0]}, {target_pos[1]})")
                 print(f"[DEBUG] spawn_pos: {spawn_pos_str}")
                 print(f"[DEBUG] env_spacing: {env_cfg.scene.env_spacing}")
-                if getattr(args_cli, 'use_frontier_test_terrain', False) or getattr(args_cli, 'use_vis_terrain', False):
-                    try:
-                        if hasattr(raw_env, 'scene') and hasattr(raw_env.scene, 'env_origins'):
-                            actual_origins = raw_env.scene.env_origins[0].cpu().numpy()
-                            fixed_origins = np.array([-5.0, -3.0, 0.0])
-                            if not np.allclose(actual_origins[:2], fixed_origins[:2], atol=0.1):
-                                origin_offset = fixed_origins - actual_origins
-                                print(f"[DEBUG] [reset修正] env_origins: {actual_origins} -> {fixed_origins}, offset={origin_offset[:2]}")
-                                with torch.no_grad():
-                                    raw_env.scene.env_origins[:] = torch.tensor([fixed_origins], device=raw_env.device)
-                                try:
-                                    robot = raw_env.scene['robot']
-                                    current_root = robot.data.root_link_pos_w.clone()
-                                    new_root = current_root + torch.tensor([origin_offset], device=current_root.device)
-                                    robot.data.root_link_pos_w[:] = new_root
-                                    print(f"[DEBUG] [reset修正] 机器人位置: {current_root[0].cpu().numpy()} -> {new_root[0].cpu().numpy()}")
-                                except Exception as e:
-                                    print(f"[DEBUG] [reset修正] 调整机器人位置失败: {e}")
-                            env_origins = fixed_origins
-                            print(f"[DEBUG] [reset修正] env_origins 已设置为: {env_origins}")
-                    except Exception as e:
-                        import traceback
-                        traceback.print_exc()
-                        print(f"[DEBUG] [reset修正] 失败: {e}")
                 try:
                     env_origins_debug = raw_env.scene.env_origins.cpu().numpy() if hasattr(raw_env.scene, 'env_origins') else np.array([[0.0, 0.0, 0.0]])
                     print(f"[DEBUG] env_origins shape: {env_origins_debug.shape}")
@@ -624,6 +595,12 @@ def main():
                     print(f"[DEBUG] env_origins all:\n{env_origins_debug}")
                     root_state_debug = inner_env.scene['robot'].data.default_root_state[0].cpu().numpy()
                     print(f"[DEBUG] default_root_state[0]: ({root_state_debug[0]:.2f}, {root_state_debug[1]:.2f}, {root_state_debug[2]:.2f})")
+                    if hasattr(raw_env.scene.terrain, 'terrain_levels'):
+                        tl = raw_env.scene.terrain.terrain_levels.cpu().numpy()
+                        print(f"[DEBUG] terrain_levels: {tl}")
+                    if hasattr(raw_env.scene.terrain, 'terrain_types'):
+                        tt = raw_env.scene.terrain.terrain_types.cpu().numpy()
+                        print(f"[DEBUG] terrain_types: {tt}")
                 except Exception as e:
                     print(f"[DEBUG] 获取 env_origins 失败: {e}")
 
@@ -680,7 +657,7 @@ def main():
                         dist_to_goal = 0.0
 
                     for f in frontiers:
-                        f['fall_rate'] = fall_rate_map.get_fall_rate_at(f['x'], f['y'], robot_pos[0], robot_pos[1], env_origins[0], env_origins[1])
+                        f['fall_rate'] = fall_rate_map.get_fall_rate_at(f['x'], f['y'], robot_pos[0], robot_pos[1])
 
                         goal_dx = f['x'] - robot_pos[0]
                         goal_dy = f['y'] - robot_pos[1]
@@ -711,15 +688,15 @@ def main():
                     frontiers.sort(key=lambda x: x['score'], reverse=True)
 
                     if getattr(args_cli, 'auto_frontier_nav', False) and frontiers:
-                        if final_target is not None and dist_to_goal < 0.3:
+                        if frontier_nav_state['reached_cooldown'] > 0:
+                            frontier_nav_state['reached_cooldown'] -= 1
+                            if timestep % 100 == 0:
+                                print(f"[规划] 冷却中... ({frontier_nav_state['reached_cooldown']})")
+                        elif final_target is not None and dist_to_goal < 0.3:
                             frontier_nav_state['reached_cooldown'] = 50
                             frontier_nav_state['last_target'] = (fx, fy)
                             if timestep % 100 == 0:
                                 print(f"[规划] 到达前沿目标 ({fx:.2f}, {fy:.2f})，等待新前沿...")
-                        elif frontier_nav_state['reached_cooldown'] > 0:
-                            frontier_nav_state['reached_cooldown'] -= 1
-                            if timestep % 100 == 0:
-                                print(f"[规划] 冷却中... ({frontier_nav_state['reached_cooldown']})")
                         else:
                             best_frontier = frontiers[0]
                             if best_frontier['score'] > 0.1:
@@ -728,6 +705,7 @@ def main():
                     frontier_vis_data.append({
                         'timestep': timestep,
                         'robot_pos': (robot_pos[0], robot_pos[1]),
+                        'env_origins': (env_origins[0], env_origins[1]),
                         'frontiers': frontiers,
                         'explored_mask': explored_mask.copy(),
                     })
@@ -757,6 +735,7 @@ def main():
                             serializable_data.append({
                                 'timestep': int(d['timestep']),
                                 'robot_pos': (float(d['robot_pos'][0]), float(d['robot_pos'][1])),
+                                'env_origins': (float(d['env_origins'][0]), float(d['env_origins'][1])),
                                 'frontiers': serializable_frontiers,
                             })
                         with open(vis_file, 'w') as f:
