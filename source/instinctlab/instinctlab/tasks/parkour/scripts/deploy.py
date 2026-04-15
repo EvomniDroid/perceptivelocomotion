@@ -26,6 +26,7 @@ parser.add_argument("--spawn_pos", type=str, default=None, help="出生位置(x,
 parser.add_argument("--frontier_debug", action="store_true", default=False, help="启用前沿点检测调试")
 parser.add_argument("--frontier_interval", type=int, default=100, help="前沿点打印间隔")
 parser.add_argument("--frontier_save_interval", type=int, default=500, help="前沿点数据保存间隔")
+parser.add_argument("--auto_frontier_nav", action="store_true", default=False, help="自动选择最优前沿点作为导航目标")
 
 sys.path.append(os.path.join(os.getcwd(), "scripts", "instinct_rl"))
 import cli_args
@@ -419,6 +420,10 @@ def main():
     )
 
     frontier_vis_data = []
+    frontier_nav_state = {
+        'reached_cooldown': 0,
+        'last_target': None,
+    }
     save_depth_dir = None
     command_obs_slice = get_obs_slice(env.get_obs_segments(), "velocity_commands")
 
@@ -526,8 +531,10 @@ def main():
                 print(f"[DEBUG] spawn_pos: {spawn_pos_str}")
                 print(f"[DEBUG] env_spacing: {env_cfg.scene.env_spacing}")
                 try:
-                    env_origins_debug = raw_env.scene.env_origins[0].cpu().numpy() if hasattr(raw_env.scene, 'env_origins') else np.array([0.0, 0.0, 0.0])
-                    print(f"[DEBUG] env_origins: ({env_origins_debug[0]:.2f}, {env_origins_debug[1]:.2f})")
+                    env_origins_debug = raw_env.scene.env_origins.cpu().numpy() if hasattr(raw_env.scene, 'env_origins') else np.array([[0.0, 0.0, 0.0]])
+                    print(f"[DEBUG] env_origins shape: {env_origins_debug.shape}")
+                    print(f"[DEBUG] env_origins[0]: ({env_origins_debug[0, 0]:.2f}, {env_origins_debug[0, 1]:.2f})")
+                    print(f"[DEBUG] env_origins all:\n{env_origins_debug}")
                     root_state_debug = inner_env.scene['robot'].data.default_root_state[0].cpu().numpy()
                     print(f"[DEBUG] default_root_state[0]: ({root_state_debug[0]:.2f}, {root_state_debug[1]:.2f}, {root_state_debug[2]:.2f})")
                 except Exception as e:
@@ -540,6 +547,9 @@ def main():
                 root_pos = robot_entity.data.root_link_pos_w
                 root_quat = robot_entity.data.root_quat_w
                 env_origins = raw_env.scene.env_origins[0].cpu().numpy() if hasattr(raw_env.scene, 'env_origins') else np.array([0.0, 0.0, 0.0])
+                if env_origins[0] != -5.0 or env_origins[1] != -3.0:
+                    print(f"[WARN] env_origins 不是预期的 (-5.0, -3.0)，而是 ({env_origins[0]:.2f}, {env_origins[1]:.2f})，可能是地形生成不确定性")
+                env_origins = np.array([-5.0, -3.0, 0.0])
                 if torch.is_tensor(root_pos) and torch.is_tensor(root_quat):
                     rx = root_pos[0, 0].item() - env_origins[0]
                     ry = root_pos[0, 1].item() - env_origins[1]
@@ -573,6 +583,60 @@ def main():
                         explored_mask, robot_pos[0], robot_pos[1], robot_yaw if robot_yaw else 0.0,
                         height_map=height_map, height_count_map=height_count_map
                     )
+
+                    final_target = planner.target_pos if getattr(args_cli, 'auto_frontier_nav', False) else None
+                    if final_target is not None:
+                        fx, fy = final_target
+                        dist_to_goal = math.sqrt((fx - robot_pos[0])**2 + (fy - robot_pos[1])**2)
+                    else:
+                        dist_to_goal = 0.0
+
+                    for f in frontiers:
+                        f['fall_rate'] = fall_rate_map.get_fall_rate_at(f['x'], f['y'], robot_pos[0], robot_pos[1])
+
+                        goal_dx = f['x'] - robot_pos[0]
+                        goal_dy = f['y'] - robot_pos[1]
+                        dist_to_frontier = math.sqrt(goal_dx**2 + goal_dy**2)
+
+                        if final_target is not None:
+                            to_goal_x = fx - robot_pos[0]
+                            to_goal_y = fy - robot_pos[1]
+                            to_goal_dist = math.sqrt(to_goal_x**2 + to_goal_y**2)
+                            if to_goal_dist > 0.1 and dist_to_frontier > 0.1:
+                                to_goal_x /= to_goal_dist
+                                to_goal_y /= to_goal_dist
+                                goal_dir_x = goal_dx / dist_to_frontier
+                                goal_dir_y = goal_dy / dist_to_frontier
+                                dot = goal_dir_x * to_goal_x + goal_dir_y * to_goal_y
+                                direction_score = max(0.1, min(1.0, dot))
+                            else:
+                                direction_score = 0.5
+                        else:
+                            direction_score = 1.0
+
+                        conf_val = float(f['conf']) if f['conf'] is not None else 0.5
+                        conf_val = max(0.1, min(2.0, conf_val))
+                        fr_val = max(0.0, min(1.0, f['fall_rate']))
+                        dist_val = max(0.3, float(f['dist']))
+                        f['score'] = (conf_val * direction_score * (1.0 - fr_val)) / dist_val
+
+                    frontiers.sort(key=lambda x: x['score'], reverse=True)
+
+                    if getattr(args_cli, 'auto_frontier_nav', False) and frontiers:
+                        if final_target is not None and dist_to_goal < 0.3:
+                            frontier_nav_state['reached_cooldown'] = 50
+                            frontier_nav_state['last_target'] = (fx, fy)
+                            if timestep % 100 == 0:
+                                print(f"[规划] 到达前沿目标 ({fx:.2f}, {fy:.2f})，等待新前沿...")
+                        elif frontier_nav_state['reached_cooldown'] > 0:
+                            frontier_nav_state['reached_cooldown'] -= 1
+                            if timestep % 100 == 0:
+                                print(f"[规划] 冷却中... ({frontier_nav_state['reached_cooldown']})")
+                        else:
+                            best_frontier = frontiers[0]
+                            if best_frontier['score'] > 0.1:
+                                planner.set_target(best_frontier['x'], best_frontier['y'])
+
                     frontier_vis_data.append({
                         'timestep': timestep,
                         'robot_pos': (robot_pos[0], robot_pos[1]),
@@ -581,7 +645,7 @@ def main():
                     })
                     print(f"[前沿] t={timestep} pos=({robot_pos[0]:.2f},{robot_pos[1]:.2f}) explored={explored_mask.sum()} 前沿数={len(frontiers)}")
                     for i, f in enumerate(frontiers[:5]):
-                        print(f"  [L{f['layer']}] world=({f['x']:.2f},{f['y']:.2f}) dist={f['dist']:.2f}m h={f['height']:.2f}m conf={f['conf']:.2f}")
+                        print(f"  [L{f['layer']}] world=({f['x']:.2f},{f['y']:.2f}) dist={f['dist']:.2f}m h={f['height']:.2f}m fr={f['fall_rate']:.2f} score={f['score']:.3f}")
                     frontier_save_interval = getattr(args_cli, 'frontier_save_interval', 500)
                     if frontier_save_interval > 0 and timestep % frontier_save_interval == 0 and frontier_vis_data:
                         import json
@@ -597,6 +661,8 @@ def main():
                                     'y': float(f['y']),
                                     'conf': float(f['conf']),
                                     'height': float(f['height']),
+                                    'fall_rate': float(f['fall_rate']),
+                                    'score': float(f['score']),
                                     'near_depth': float(f['near_depth']),
                                     'far_depth': float(f['far_depth']),
                                 })
