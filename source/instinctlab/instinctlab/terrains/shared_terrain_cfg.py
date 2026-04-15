@@ -590,6 +590,46 @@ MY_TERRAIN_CFG = FiledTerrainGeneratorCfg(
 
 
 # ====================================================================
+# FRONTIER_TEST_TERRAIN_CFG - 用于测试前沿点导航的简单地形
+# 特点：
+#   - 简单地形（平地+简单斜坡）
+#   - 摔倒率预设在 LocalFallRateMap 中手动指定
+#   - 地图布局：6行4列，每格 2m x 2m，总共 12m x 8m
+#   - 摔倒率预设：起点安全(0.0)，随距离和位置增加
+# ====================================================================
+
+FRONTIER_TEST_TERRAIN_CFG = FiledTerrainGeneratorCfg(
+    class_type=FiledTerrainGenerator,
+    seed=42,
+    size=(2.0, 2.0),
+    border_width=0.05,
+    num_rows=6,
+    num_cols=4,
+    horizontal_scale=0.05,
+    vertical_scale=0.005,
+    slope_threshold=1.0,
+    use_cache=False,
+    curriculum=False,
+    terrain_layout=[
+        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+    ],
+    sub_terrains=_terrain_layout_to_ordered_dict([
+        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+        "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
+    ], expected_count=6*4),
+)
+
+
+# ====================================================================
 # ROUGH_TERRAINS_CFG 用的子地形 - 用于训练
 # ====================================================================
 # 训练时使用的地形子集，包含课程学习比例设置

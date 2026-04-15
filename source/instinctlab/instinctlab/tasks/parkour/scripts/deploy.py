@@ -11,9 +11,12 @@ parser = argparse.ArgumentParser(description="部署RL智能体，包含摔倒�
 parser.add_argument("--task", type=str, default=None, help="任务名称")
 parser.add_argument("--num_envs", type=int, default=None, help="仿真环境数量")
 parser.add_argument("--classifier_model", type=str, default=None, help="摔倒率分类器模型路径(.pth)，不提供则只加载RL策略")
+parser.add_argument("--fall_rate_override", type=float, default=None, help="手动设置所有摔倒率值(0-1)，用于测试")
 parser.add_argument("--save_depth_interval", type=int, default=0, help="每N步保存一次深度图，0表示禁用")
 parser.add_argument("--fall_rate_threshold", type=float, default=0.5, help="切换到安全模式的摔倒率阈值")
 parser.add_argument("--use_vis_terrain", action="store_true", default=False, help="使用vis.py的地形配置进行泛化测试")
+parser.add_argument("--use_frontier_test_terrain", action="store_true", default=False, help="使用FRONTIER_TEST_TERRAIN地形（预设摔倒率的简单地形）")
+parser.add_argument("--preset_fall_rate_map", action="store_true", default=False, help="使用预设摔倒率地图（棋盘格），可独立于terrain使用")
 parser.add_argument("--vel_debug", action="store_true", default=False, help="启用速度调试模式，使用直接速度指令替代RL策略")
 parser.add_argument("--vel", type=str, default="0.5,0.0,0.0", help="调试模式速度向量: vel_x,vel_y,ang_z (逗号分隔，默认0.5,0.0,0.0)")
 parser.add_argument("--keyboard_control", action="store_true", default=False, help="启用键盘控制速度 (WASD)")
@@ -55,7 +58,7 @@ from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent
 from isaaclab_tasks.utils import get_checkpoint_path, parse_env_cfg
 from instinctlab.utils.wrappers import InstinctRlVecEnvWrapper
 from instinctlab.utils.wrappers.instinct_rl import InstinctRlOnPolicyRunnerCfg
-from instinctlab.terrains.shared_terrain_cfg import MY_TERRAIN_CFG
+from instinctlab.terrains.shared_terrain_cfg import MY_TERRAIN_CFG, FRONTIER_TEST_TERRAIN_CFG
 
 sys.path.append("/home/zh/isaac/liveratemodel")
 from model import create_model
@@ -228,6 +231,8 @@ def main():
     print("\n" + "="*60)
     print("部署 RL策略 + 摔倒率分类器 + 运动规划器")
     print("="*60)
+    print(f"[DEBUG] use_frontier_test_terrain CLI = {args_cli.use_frontier_test_terrain}")
+    print(f"[DEBUG] use_vis_terrain CLI = {args_cli.use_vis_terrain}")
 
     env_cfg = parse_env_cfg(
         args_cli.task,
@@ -235,6 +240,9 @@ def main():
         num_envs=args_cli.num_envs if args_cli.num_envs is not None else 1,
         use_fabric=not getattr(args_cli, 'disable_fabric', False)
     )
+    print(f"[DEBUG] parse_env_cfg 后 terrain_generator type: {type(env_cfg.scene.terrain.terrain_generator).__name__}")
+    print(f"[DEBUG] use_frontier_test_terrain = {getattr(args_cli, 'use_frontier_test_terrain', False)}")
+    print(f"[DEBUG] use_vis_terrain = {getattr(args_cli, 'use_vis_terrain', False)}")
 
     if getattr(args_cli, 'use_vis_terrain', False):
         print("[INFO] 使用vis地形配置进行泛化测试 (MY_TERRAIN_CFG)")
@@ -242,6 +250,13 @@ def main():
         env_cfg.scene.terrain.curriculum = False
         env_cfg.scene.env_spacing = 0.0
         print("[INFO] env_spacing=0, env_origins 将全部为 (0,0,0)，坐标系统一")
+
+    if getattr(args_cli, 'use_frontier_test_terrain', False):
+        print("[INFO] 使用FRONTIER_TEST_TERRAIN地形（预设摔倒率的简单地形）")
+        env_cfg.scene.terrain.terrain_generator = FRONTIER_TEST_TERRAIN_CFG
+        env_cfg.scene.terrain.curriculum = False
+        env_cfg.scene.env_spacing = 0.0
+        print(f"[INFO] terrain_generator 已设置为 FRONTIER_TEST_TERRAIN_CFG, size={env_cfg.scene.terrain.terrain_generator.size}")
 
     if getattr(args_cli, 'debug_ray', False):
         if hasattr(env_cfg.scene, 'left_height_scanner'):
@@ -298,8 +313,43 @@ def main():
     print(f"[INFO] 恢复路径: {resume_path}")
 
     print("[DEBUG] 1. gym.make 之前")
+    print(f"[DEBUG] 1b. env_cfg.scene.terrain.terrain_generator = {type(env_cfg.scene.terrain.terrain_generator).__name__}")
+    print(f"[DEBUG] 1c. env_cfg.scene.terrain.terrain_generator.size = {env_cfg.scene.terrain.terrain_generator.size}")
+    print(f"[DEBUG] 1d. env_cfg.scene.env_spacing = {env_cfg.scene.env_spacing}")
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if getattr(args_cli, 'video', False) else None)
     print("[DEBUG] 2. gym.make 完成")
+    print(f"[DEBUG] 2b. env_cfg.scene.terrain.terrain_generator type: {type(env_cfg.scene.terrain.terrain_generator).__name__}")
+    print(f"[DEBUG] 2c. env_cfg.scene.terrain.terrain_generator.size: {env_cfg.scene.terrain.terrain_generator.size if hasattr(env_cfg.scene.terrain.terrain_generator, 'size') else 'N/A'}")
+    print(f"[DEBUG] 2d. env_cfg.scene.env_spacing: {env_cfg.scene.env_spacing}")
+
+    if getattr(args_cli, 'use_frontier_test_terrain', False) or getattr(args_cli, 'use_vis_terrain', False):
+        try:
+            raw_env = env.unwrapped
+            while hasattr(raw_env, 'unwrapped') and not hasattr(raw_env, 'scene'):
+                raw_env = raw_env.env
+            if hasattr(raw_env, 'scene') and hasattr(raw_env.scene, 'env_origins'):
+                actual_origins = raw_env.scene.env_origins[0].cpu().numpy()
+                print(f"[DEBUG] 2e. 当前 env_origins: {actual_origins}")
+                fixed_origins = np.array([-5.0, -3.0, 0.0])
+                if not np.allclose(actual_origins[:2], fixed_origins[:2], atol=0.1):
+                    origin_offset = fixed_origins - actual_origins
+                    print(f"[DEBUG] 2f. 强制重置 env_origins: {actual_origins} -> {fixed_origins}, offset={origin_offset}")
+                    with torch.no_grad():
+                        raw_env.scene.env_origins[:] = torch.tensor([fixed_origins], device=raw_env.device)
+                    try:
+                        robot = raw_env.scene['robot']
+                        current_root = robot.data.root_link_pos_w.clone()
+                        new_root = current_root + torch.tensor([origin_offset], device=current_root.device)
+                        robot.data.root_link_pos_w[:] = new_root
+                        print(f"[DEBUG] 2g. 机器人位置已调整: {current_root[0].cpu().numpy()} -> {new_root[0].cpu().numpy()}")
+                    except Exception as e:
+                        print(f"[DEBUG] 2g. 调整机器人位置失败: {e}")
+                else:
+                    print(f"[DEBUG] 2e. env_origins 已正确: {actual_origins}")
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"[DEBUG] 2e. 重置 env_origins 失败: {e}")
     print("[DEBUG] 3. 准备访问 env.unwrapped...")
     tmp = env.unwrapped
     print(f"[DEBUG] 3b. env.unwrapped 类型: {type(tmp).__name__}")
@@ -404,6 +454,7 @@ def main():
         target_pos=target_pos
     )
 
+    use_preset_fall_rate = getattr(args_cli, 'preset_fall_rate_map', False)
     fall_rate_map = LocalFallRateMap(
         map_size=200,
         cell_size=0.05,
@@ -411,7 +462,9 @@ def main():
         fov=87.0,
         focal_length=400.0,
         horizontal_aperture=640.0,
+        use_preset_fall_rate=use_preset_fall_rate,
     )
+
     frontier_detector = FrontierDetector(
         map_size=200,
         cell_size=0.05,
@@ -433,6 +486,11 @@ def main():
     frontier_save_dir = os.path.join(log_dir, "frontier", f"run_{timestamp}_{run_id}")
     os.makedirs(frontier_save_dir, exist_ok=True)
     print(f"[INFO] 前沿数据保存目录: {frontier_save_dir}")
+
+    if use_preset_fall_rate:
+        fall_rate_map_path = os.path.join(frontier_save_dir, "preset_fall_rate_map.json")
+        fall_rate_map.save_preset_map(fall_rate_map_path)
+
     save_depth_dir = None
     if getattr(args_cli, 'save_depth_interval', 0) > 0:
         save_depth_dir = os.path.join(log_dir, f"deploy_depth_{run_id}")
@@ -525,11 +583,40 @@ def main():
                 fall_rate = 0.0
                 terrain_name = "unknown"
 
+            fall_rate_override = getattr(args_cli, 'fall_rate_override', None)
+            if fall_rate_override is not None:
+                fall_rate = fall_rate_override
+                terrain_name = f"override({fall_rate_override:.2f})"
+
             if timestep == 0:
                 print(f"[DEBUG] ===== 部署开始 =====")
                 print(f"[DEBUG] target_pos: ({target_pos[0]}, {target_pos[1]})")
                 print(f"[DEBUG] spawn_pos: {spawn_pos_str}")
                 print(f"[DEBUG] env_spacing: {env_cfg.scene.env_spacing}")
+                if getattr(args_cli, 'use_frontier_test_terrain', False) or getattr(args_cli, 'use_vis_terrain', False):
+                    try:
+                        if hasattr(raw_env, 'scene') and hasattr(raw_env.scene, 'env_origins'):
+                            actual_origins = raw_env.scene.env_origins[0].cpu().numpy()
+                            fixed_origins = np.array([-5.0, -3.0, 0.0])
+                            if not np.allclose(actual_origins[:2], fixed_origins[:2], atol=0.1):
+                                origin_offset = fixed_origins - actual_origins
+                                print(f"[DEBUG] [reset修正] env_origins: {actual_origins} -> {fixed_origins}, offset={origin_offset[:2]}")
+                                with torch.no_grad():
+                                    raw_env.scene.env_origins[:] = torch.tensor([fixed_origins], device=raw_env.device)
+                                try:
+                                    robot = raw_env.scene['robot']
+                                    current_root = robot.data.root_link_pos_w.clone()
+                                    new_root = current_root + torch.tensor([origin_offset], device=current_root.device)
+                                    robot.data.root_link_pos_w[:] = new_root
+                                    print(f"[DEBUG] [reset修正] 机器人位置: {current_root[0].cpu().numpy()} -> {new_root[0].cpu().numpy()}")
+                                except Exception as e:
+                                    print(f"[DEBUG] [reset修正] 调整机器人位置失败: {e}")
+                            env_origins = fixed_origins
+                            print(f"[DEBUG] [reset修正] env_origins 已设置为: {env_origins}")
+                    except Exception as e:
+                        import traceback
+                        traceback.print_exc()
+                        print(f"[DEBUG] [reset修正] 失败: {e}")
                 try:
                     env_origins_debug = raw_env.scene.env_origins.cpu().numpy() if hasattr(raw_env.scene, 'env_origins') else np.array([[0.0, 0.0, 0.0]])
                     print(f"[DEBUG] env_origins shape: {env_origins_debug.shape}")
@@ -542,14 +629,12 @@ def main():
 
             robot_pos = None
             robot_yaw = None
+            env_origins = np.array([0.0, 0.0, 0.0])
             try:
                 robot_entity = env_scene["robot"]
                 root_pos = robot_entity.data.root_link_pos_w
                 root_quat = robot_entity.data.root_quat_w
                 env_origins = raw_env.scene.env_origins[0].cpu().numpy() if hasattr(raw_env.scene, 'env_origins') else np.array([0.0, 0.0, 0.0])
-                if env_origins[0] != -5.0 or env_origins[1] != -3.0:
-                    print(f"[WARN] env_origins 不是预期的 (-5.0, -3.0)，而是 ({env_origins[0]:.2f}, {env_origins[1]:.2f})，可能是地形生成不确定性")
-                env_origins = np.array([-5.0, -3.0, 0.0])
                 if torch.is_tensor(root_pos) and torch.is_tensor(root_quat):
                     rx = root_pos[0, 0].item() - env_origins[0]
                     ry = root_pos[0, 1].item() - env_origins[1]
@@ -557,6 +642,8 @@ def main():
                     q = root_quat[0]
                     w, x, y, z = q[0].item(), q[1].item(), q[2].item(), q[3].item()
                     robot_yaw = math.atan2(2.0*(w*z + x*y), 1.0 - 2.0*(y*y + z*z))
+                    if timestep % 200 == 0:
+                        print(f"[DEBUG] env_origins={env_origins[:2]}, robot_rel=({rx:.3f}, {ry:.3f})")
             except Exception as e:
                 if timestep % 200 == 0:
                     print(f"[DEBUG] 获取位置失败: {e}")
@@ -567,7 +654,8 @@ def main():
                     if frontier_debug_print:
                         print(f"[DEBUG] depth_np shape={depth_np.shape}, dtype={depth_np.dtype}, min={depth_np.min():.3f}, max={depth_np.max():.3f}")
                     fall_rate_map.update_map(
-                        depth_np, fall_rate, robot_pos[0], robot_pos[1], robot_yaw if robot_yaw else 0.0
+                        depth_np, fall_rate, robot_pos[0], robot_pos[1], robot_yaw if robot_yaw else 0.0,
+                        skip_fall_rate_update=use_preset_fall_rate
                     )
                     if frontier_debug_print:
                         print(f"[DEBUG] after update_map explored_sum={fall_rate_map.get_explored_mask().sum()}")
@@ -592,7 +680,7 @@ def main():
                         dist_to_goal = 0.0
 
                     for f in frontiers:
-                        f['fall_rate'] = fall_rate_map.get_fall_rate_at(f['x'], f['y'], robot_pos[0], robot_pos[1])
+                        f['fall_rate'] = fall_rate_map.get_fall_rate_at(f['x'], f['y'], robot_pos[0], robot_pos[1], env_origins[0], env_origins[1])
 
                         goal_dx = f['x'] - robot_pos[0]
                         goal_dy = f['y'] - robot_pos[1]
