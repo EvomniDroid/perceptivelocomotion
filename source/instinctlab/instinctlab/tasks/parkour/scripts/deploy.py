@@ -451,8 +451,8 @@ def main():
 
     use_preset_fall_rate = getattr(args_cli, 'preset_fall_rate_map', False)
     fall_rate_map = LocalFallRateMap(
-        map_size=240,
-        cell_size=0.05,
+        map_size=1200,
+        cell_size=0.01,
         max_depth=2.5,
         fov=87.0,
         focal_length=400.0,
@@ -461,8 +461,8 @@ def main():
     )
 
     frontier_detector = FrontierDetector(
-        map_size=240,
-        cell_size=0.05,
+        map_size=1200,
+        cell_size=0.01,
         fov=87.0,
         max_depth=2.5,
     )
