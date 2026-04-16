@@ -140,13 +140,16 @@ class MotionPlanner:
         self.vel_debug = vel_debug
         self.debug_vels = debug_vels or {}
         self.target_pos = target_pos
+        self.final_target = None
         self.init_pos = None
         self.Kp_lin = 0.5
         self.Kp_ang = 1.5
         self._keyboard_active = False
 
-    def set_target(self, x, y):
+    def set_target(self, x, y, final_target=None):
         self.target_pos = (x, y)
+        if final_target is not None:
+            self.final_target = final_target
         self.init_pos = None
         print(f"[规划] 目标位置设置为: ({x:.2f}, {y:.2f}) 相对坐标")
 
@@ -216,7 +219,10 @@ class MotionPlanner:
             vel_x *= 0.5
 
         if timestep is None or timestep % log_interval == 0:
-            print(f"[规划] 当前({rx:.2f},{ry:.2f}) 目标({tx:.2f},{ty:.2f}) 距离:{dist:.2f} 世界角:{math.degrees(world_angle):.1f}° 相对角:{math.degrees(rel_angle):.1f}° -> vel({vel_x:.2f},{ang_z:.2f})")
+            if self.final_target is not None:
+                print(f"[规划] 当前({rx:.2f},{ry:.2f}) 目标({tx:.2f},{ty:.2f}) 最终({self.final_target[0]:.2f},{self.final_target[1]:.2f}) 距离:{dist:.2f}")
+            else:
+                print(f"[规划] 当前({rx:.2f},{ry:.2f}) 目标({tx:.2f},{ty:.2f}) 距离:{dist:.2f}")
         return vel_x, 0.0, ang_z
 
     def _inject_velocity(self, obs, command_obs_slice, vel_x, vel_y, ang_z):
@@ -449,6 +455,10 @@ def main():
         target_pos=target_pos
     )
 
+    if target_pos is not None:
+        planner.final_target = target_pos
+        print(f"[规划] 最终目标设置为: ({target_pos[0]}, {target_pos[1]})")
+
     use_preset_fall_rate = getattr(args_cli, 'preset_fall_rate_map', False)
     fall_rate_map = LocalFallRateMap(
         map_size=1200,
@@ -471,6 +481,9 @@ def main():
     frontier_nav_state = {
         'reached_cooldown': 0,
         'last_target': None,
+        '_cooldown_ended': False,
+        '_target_set_time': 0,
+        '_waiting_for_movement': False,
     }
     save_depth_dir = None
     command_obs_slice = get_obs_slice(env.get_obs_segments(), "velocity_commands")
@@ -649,7 +662,7 @@ def main():
                         height_map=height_map, height_count_map=height_count_map
                     )
 
-                    final_target = planner.target_pos if getattr(args_cli, 'auto_frontier_nav', False) else None
+                    final_target = planner.final_target if getattr(args_cli, 'auto_frontier_nav', False) else None
                     if final_target is not None:
                         fx, fy = final_target
                         dist_to_goal = math.sqrt((fx - robot_pos[0])**2 + (fy - robot_pos[1])**2)
@@ -683,24 +696,45 @@ def main():
                         conf_val = max(0.1, min(2.0, conf_val))
                         fr_val = max(0.0, min(1.0, f['fall_rate']))
                         dist_val = max(0.3, float(f['dist']))
-                        f['score'] = (conf_val * direction_score * (1.0 - fr_val)) / dist_val
+                        dist_score = min(1.0, 3.0 / dist_val) if dist_val > 0 else 0
+                        f['score'] = conf_val * direction_score * direction_score * (1.0 - fr_val) * dist_score
 
                     frontiers.sort(key=lambda x: x['score'], reverse=True)
 
                     if getattr(args_cli, 'auto_frontier_nav', False) and frontiers:
                         if frontier_nav_state['reached_cooldown'] > 0:
                             frontier_nav_state['reached_cooldown'] -= 1
+                            if frontier_nav_state['reached_cooldown'] == 0:
+                                frontier_nav_state['_cooldown_ended'] = True
                             if timestep % 100 == 0:
                                 print(f"[规划] 冷却中... ({frontier_nav_state['reached_cooldown']})")
-                        elif final_target is not None and dist_to_goal < 0.3:
-                            frontier_nav_state['reached_cooldown'] = 50
-                            frontier_nav_state['last_target'] = (fx, fy)
-                            if timestep % 100 == 0:
-                                print(f"[规划] 到达前沿目标 ({fx:.2f}, {fy:.2f})，等待新前沿...")
-                        else:
+                        elif frontier_nav_state.get('_cooldown_ended', False):
+                            frontier_nav_state['_cooldown_ended'] = False
+                            frontier_nav_state['_target_set_time'] = timestep
+                            frontier_nav_state['_waiting_for_movement'] = True
                             best_frontier = frontiers[0]
                             if best_frontier['score'] > 0.1:
                                 planner.set_target(best_frontier['x'], best_frontier['y'])
+                                print(f"[规划] 选择新前沿目标: ({best_frontier['x']:.2f}, {best_frontier['y']:.2f}), score={best_frontier['score']:.3f}")
+                            elif best_frontier.get('fall_rate', 1.0) >= 0.5 and best_frontier['score'] > 0.01:
+                                planner.set_target(best_frontier['x'], best_frontier['y'])
+                                print(f"[规划] 选择危险前沿目标: ({best_frontier['x']:.2f}, {best_frontier['y']:.2f}), score={best_frontier['score']:.3f}, fr={best_frontier['fall_rate']:.2f}")
+                        elif frontier_nav_state.get('_waiting_for_movement', False):
+                            dist_to_target = math.sqrt((planner.target_pos[0] - robot_pos[0])**2 + (planner.target_pos[1] - robot_pos[1])**2) if planner.target_pos else 0.0
+                            time_since_target = timestep - frontier_nav_state.get('_target_set_time', timestep)
+                            if dist_to_target < 0.3 and time_since_target > 30:
+                                frontier_nav_state['_waiting_for_movement'] = False
+                                frontier_nav_state['reached_cooldown'] = 50
+                                frontier_nav_state['_cooldown_ended'] = True
+                                frontier_nav_state['last_target'] = planner.target_pos
+                                print(f"[规划] 到达前沿目标 ({planner.target_pos[0]:.2f}, {planner.target_pos[1]:.2f})，等待新前沿...")
+                            elif time_since_target > 80:
+                                frontier_nav_state['_waiting_for_movement'] = False
+                                if frontiers and frontiers[0]['score'] > 0.01:
+                                    planner.set_target(frontiers[0]['x'], frontiers[0]['y'])
+                        else:
+                            if frontiers and frontiers[0]['score'] > 0.1:
+                                planner.set_target(frontiers[0]['x'], frontiers[0]['y'])
 
                     frontier_vis_data.append({
                         'timestep': timestep,
