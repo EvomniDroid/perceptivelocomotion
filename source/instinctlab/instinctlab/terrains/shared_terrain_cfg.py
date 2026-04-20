@@ -45,7 +45,7 @@ def _inject_name_to_cfgs(sub_terrains):
     return sub_terrains
 
 
-def _terrain_with_sampling(name, enabled=True, num_patches=10):
+def _terrain_with_sampling(name, enabled=True, num_patches=3):
     """
     创建带或不带 flat_patch_sampling 的地形配置
 
@@ -150,8 +150,8 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         proportion=1.0,
         step_height_range=(0.15, 0.35),
         step_width=0.25,
-        platform_width=0.8,
-        border_width=0.3,
+        platform_width=0.0,
+        border_width=0.0,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
         wall_thickness=0.05,
@@ -165,8 +165,8 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         ),
         flat_patch_sampling={
             "target": FlatPatchSamplingCfg(
-                num_patches=10,
-                patch_radius=[0.05, 0.10, 0.15, 0.20],
+                num_patches=3,
+                patch_radius=[0.05],
                 max_height_diff=0.5,
                 x_range=(-0.5, 0.5),
                 y_range=(-0.5, 0.5),
@@ -179,8 +179,8 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         proportion=1.0,
         step_height_range=(0.15, 0.35),
         step_width=0.25,
-        platform_width=0.8,
-        border_width=0.3,
+        platform_width=0.0,
+        border_width=0.0,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
         wall_thickness=0.05,
@@ -203,14 +203,14 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
 
-    # 地形5: 离散障碍物
+    # 地形 5: 离散障碍物
     "discrete_obstacles": PerlinDiscreteObstaclesTerrainCfg(
         proportion=1.0,
         num_obstacles=20,
         obstacle_height_range=(0.05, 0.45),
         obstacle_width_range=(0.1, 0.4),
-        platform_width=1.5,
-        border_width=0.3,
+        platform_width=0.0,
+        border_width=0.0,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
         wall_thickness=0.05,
@@ -234,9 +234,9 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
     # 地形 6: 金字塔斜坡
     "pyramid_slope": PerlinPyramidSlopedTerrainCfg(
         proportion=1.0,
-        slope_range=(5, 10),
-        platform_width=1.0,
-        border_width=0.3,
+        slope_range=(0.1, 0.3),
+        platform_width=0.0,
+        border_width=0.0,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
         wall_thickness=0.05,
@@ -260,9 +260,9 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
     # 地形 7: 反向金字塔斜坡
     "pyramid_slope_inv": PerlinInvertedPyramidSlopedTerrainCfg(
         proportion=1.0,
-        slope_range=(3, 8),
-        platform_width=1.0,
-        border_width=0.3,
+        slope_range=(0.1, 0.25),
+        platform_width=0.0,
+        border_width=0.0,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
         wall_thickness=0.05,
@@ -283,12 +283,12 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
 
-    # 地形8: 波浪地形
+    # 地形 8: 波浪地形
     "wave": PerlinWaveTerrainCfg(
         proportion=1.0,
         amplitude_range=(0.1, 0.3),
         num_waves=3,
-        border_width=0.3,
+        border_width=0.0,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
         wall_thickness=0.05,
@@ -301,14 +301,14 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
 
-    # 地形9: 踏脚石
+    # 地形 9: 踏脚石
     "stepping_stones": PerlinSteppingStonesTerrainCfg(
         proportion=1.0,
         stone_width_range=(0.1, 0.5),
         stone_height_max=0.1,
         stone_distance_range=(0.15, 0.35),
-        platform_width=1.5,
-        border_width=0.3,
+        platform_width=0.0,
+        border_width=0.0,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
         wall_thickness=0.05,
@@ -330,14 +330,14 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
 
-    # 地形10: 矮墙/栏杆
+    # 地形 10: 矮墙/栏杆
     "parapet": PerlinParapetTerrainCfg(
         proportion=1.0,
         parapet_height=(0.1, 0.3),
         parapet_length=(0.1, 0.3),
         parapet_width=None,
         curved_top_rate=None,
-        border_width=0.3,
+        border_width=0.0,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
         wall_thickness=0.05,
@@ -364,7 +364,7 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         gutter_length=(0.5, 1.5),
         gutter_depth=(0.1, 0.3),
         gutter_width=0.3,
-        border_width=0.3,
+        border_width=0.0,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
         wall_thickness=0.05,
@@ -385,7 +385,7 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         per_step_length=(0.15, 0.15),
         num_steps=(8, 10),
         platform_length=0.3,
-        border_width=0.3,
+        border_width=0.0,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
         wall_thickness=0.05,
@@ -414,7 +414,7 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         per_step_length=(0.15, 0.15),
         num_steps=(8, 10),
         platform_length=0.3,
-        border_width=0.3,
+        border_width=0.0,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
         wall_thickness=0.05,
@@ -588,6 +588,17 @@ MY_TERRAIN_CFG = FiledTerrainGeneratorCfg(
     ], expected_count=6*4),
 )
 
+# 恢复 flat_patch_sampling 但用更宽松的参数
+for name, cfg in MY_TERRAIN_CFG.sub_terrains.items():
+    if hasattr(cfg, 'flat_patch_sampling'):
+        cfg.flat_patch_sampling = {
+            "target": FlatPatchSamplingCfg(
+                num_patches=3,
+                patch_radius=[0.05],
+                max_height_diff=1.0,  # 增加高度差容忍度
+            ),
+        }
+
 
 # ====================================================================
 # FRONTIER_TEST_TERRAIN_CFG - 用于测试前沿点导航的简单地形
@@ -627,6 +638,17 @@ FRONTIER_TEST_TERRAIN_CFG = FiledTerrainGeneratorCfg(
         "perlin_rough", "perlin_rough", "perlin_rough", "perlin_rough",
     ], expected_count=6*4),
 )
+
+# 恢复 flat_patch_sampling 但用更宽松的参数
+for name, cfg in FRONTIER_TEST_TERRAIN_CFG.sub_terrains.items():
+    if hasattr(cfg, 'flat_patch_sampling'):
+        cfg.flat_patch_sampling = {
+            "target": FlatPatchSamplingCfg(
+                num_patches=3,
+                patch_radius=[0.05],
+                max_height_diff=1.0,  # 增加高度差容忍度
+            ),
+        }
 
 
 # ====================================================================
