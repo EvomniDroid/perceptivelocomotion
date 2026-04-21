@@ -502,8 +502,10 @@ def main():
         fall_rate_map.save_preset_map(fall_rate_map_path)
 
     save_depth_dir = None
+    save_depth_interval = 0
     if getattr(args_cli, 'save_depth_interval', 0) > 0:
-        save_depth_dir = os.path.join(log_dir, f"deploy_depth_{run_id}")
+        save_depth_dir = os.path.join(log_dir, "depth_images", f"run_{timestamp}_{run_id}")
+        save_depth_interval = getattr(args_cli, 'save_depth_interval', 0)
         os.makedirs(save_depth_dir, exist_ok=True)
         print(f"[INFO] 深度图保存目录: {save_depth_dir}")
 
@@ -645,6 +647,21 @@ def main():
                     if depth_np.ndim == 3:
                         depth_np = depth_np.squeeze(-1)
                     depth_np = np.nan_to_num(depth_np, nan=0.0, posinf=10.0, neginf=0.0)
+
+                    # 保存深度图
+                    if save_depth_dir is not None and save_depth_interval > 0 and timestep % save_depth_interval == 0:
+                        # 使用固定深度范围归一化（0-5 米），避免每帧独立归一化导致对比度差
+                        fixed_min, fixed_max = 0.0, 5.0
+                        depth_clipped = np.clip(depth_np, fixed_min, fixed_max)
+                        depth_normalized = ((depth_clipped - fixed_min) / (fixed_max - fixed_min) * 255).astype(np.uint8)
+                        # 保存灰度图
+                        depth_filename = os.path.join(save_depth_dir, f"depth_t{timestep}.png")
+                        cv2.imwrite(depth_filename, depth_normalized)
+                        # 保存彩色图（JET colormap）
+                        depth_colored = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
+                        depth_colored_rgb = cv2.cvtColor(depth_colored, cv2.COLOR_BGR2RGB)
+                        depth_colored_filename = os.path.join(save_depth_dir, f"depth_color_t{timestep}.png")
+                        cv2.imwrite(depth_colored_filename, depth_colored_rgb)
                 else:
                     if timestep % 200 == 0:
                         print(f"[DEBUG] 深度数据为空或无效")
