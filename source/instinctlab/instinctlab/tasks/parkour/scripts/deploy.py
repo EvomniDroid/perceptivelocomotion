@@ -29,6 +29,7 @@ parser.add_argument("--spawn_pos", type=str, default=None, help="出生位置(x,
 parser.add_argument("--frontier_debug", action="store_true", default=False, help="启用前沿点检测调试")
 parser.add_argument("--frontier_interval", type=int, default=100, help="前沿点打印间隔")
 parser.add_argument("--frontier_save_interval", type=int, default=500, help="前沿点数据保存间隔")
+parser.add_argument("--save_rgb_interval", type=int, default=0, help="每N步保存一次RGB图像，0表示禁用")
 parser.add_argument("--auto_frontier_nav", action="store_true", default=False, help="自动选择最优前沿点作为导航目标")
 
 sys.path.append(os.path.join(os.getcwd(), "scripts", "instinct_rl"))
@@ -46,6 +47,7 @@ simulation_app = app_launcher.app
 import carb.input
 import omni.appwindow
 from carb.input import KeyboardEventType
+import cv2
 
 from instinct_rl.utils.utils import get_obs_slice
 import gymnasium as gym
@@ -505,6 +507,14 @@ def main():
         os.makedirs(save_depth_dir, exist_ok=True)
         print(f"[INFO] 深度图保存目录: {save_depth_dir}")
 
+    save_rgb_dir = None
+    save_rgb_interval = 0
+    if getattr(args_cli, 'save_rgb_interval', 0) > 0:
+        save_rgb_dir = os.path.join(log_dir, "images", f"run_{timestamp}_{run_id}")
+        save_rgb_interval = getattr(args_cli, 'save_rgb_interval', 0)
+        os.makedirs(save_rgb_dir, exist_ok=True)
+        print(f"[INFO] RGB图像保存目录: {save_rgb_dir}")
+
     obs, _ = env.get_observations()
     timestep = 0
 
@@ -569,6 +579,63 @@ def main():
     try:
         while True:
             depth_np = None
+            rgb_image = None
+            
+            # 读取 RGB 相机图像
+            try:
+                rgb_data = raw_env.scene["rgb_camera"].data.output["rgb"]
+                if timestep % 50 == 0:
+                    print(f"[DEBUG] RGB 数据：type={type(rgb_data)}, len={len(rgb_data) if hasattr(rgb_data, '__len__') else 'N/A'}")
+                    if rgb_data is not None and len(rgb_data) > 0:
+                        print(f"[DEBUG] RGB 数据 [0] shape={rgb_data[0].shape}, min={rgb_data[0].min():.3f}, max={rgb_data[0].max():.3f}")
+                if rgb_data is not None and len(rgb_data) > 0:
+                    rgb_image = rgb_data[0].cpu().numpy()
+                    # 调试相机位置
+                    if timestep % 100 == 0:
+                        try:
+                            rgb_cam_pos = raw_env.scene["rgb_camera"].data.pos_w
+                            rgb_cam_quat = raw_env.scene["rgb_camera"].data.quat_w_world
+                            print(f"[DEBUG] RGB相机 world位置: {rgb_cam_pos}")
+                            print(f"[DEBUG] RGB相机 world旋转: {rgb_cam_quat}")
+                        except Exception as e:
+                            print(f"[DEBUG] 获取相机pose失败: {e}")
+                else:
+                    if timestep % 200 == 0:
+                        print(f"[DEBUG] RGB 相机数据为空")
+            except Exception as e:
+                if timestep % 200 == 0:
+                    print(f"[DEBUG] 获取 RGB 图像失败：{e}")
+            
+            # 显示 RGB 图像
+            if rgb_image is not None:
+                try:
+                    # 先检查原始数据
+                    if timestep % 50 == 0:
+                        print(f"[DEBUG] RGB 原始数据: shape={rgb_image.shape}, dtype={rgb_image.dtype}")
+                        print(f"[DEBUG] RGB 通道统计: R[{rgb_image[:,:,0].min():.0f}-{rgb_image[:,:,0].max():.0f}] G[{rgb_image[:,:,1].min():.0f}-{rgb_image[:,:,1].max():.0f}] B[{rgb_image[:,:,2].min():.0f}-{rgb_image[:,:,2].max():.0f}]")
+                        # 检查是否有变化
+                        unique_vals = np.unique(rgb_image)
+                        print(f"[DEBUG] RGB 唯一值数量: {len(unique_vals)}, 前10个: {unique_vals[:10]}")
+                    
+                    # rgb_image 已经是 uint8 0-255 范围
+                    if rgb_image.dtype == np.uint8:
+                        # 先不拉伸，直接显示原始数据
+                        rgb_bgr = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
+                    else:
+                        # 如果是 float 0-1 范围，转换到 0-255
+                        rgb_bgr = cv2.cvtColor((rgb_image * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
+                    rgb_bgr_scaled = cv2.resize(rgb_bgr, (640, 360), interpolation=cv2.INTER_LINEAR)
+                    cv2.imshow("RGB Camera View", rgb_bgr_scaled)
+                    cv2.waitKey(1)
+
+                    # 保存RGB图像（保存原始数据，不拉伸）
+                    if save_rgb_dir is not None and save_rgb_interval > 0 and timestep % save_rgb_interval == 0:
+                        rgb_filename = os.path.join(save_rgb_dir, f"rgb_t{timestep}.png")
+                        cv2.imwrite(rgb_filename, rgb_bgr)
+                except Exception as e:
+                    if timestep % 200 == 0:
+                        print(f"[DEBUG] 显示 RGB 图像失败：{e}")
+            
             try:
                 depth_data = raw_env.scene["camera"].data.output["distance_to_image_plane"]
                 if timestep % 200 == 0:
