@@ -30,11 +30,15 @@ parser.add_argument("--frontier_debug", action="store_true", default=False, help
 parser.add_argument("--frontier_interval", type=int, default=100, help="前沿点打印间隔")
 parser.add_argument("--frontier_save_interval", type=int, default=500, help="前沿点数据保存间隔")
 parser.add_argument("--save_rgb_interval", type=int, default=0, help="每N步保存一次RGB图像，0表示禁用")
+parser.add_argument("--qwen_detect_interval", type=int, default=0, help="Qwen实时检测红色方块间隔，0表示禁用")
 parser.add_argument("--auto_frontier_nav", action="store_true", default=False, help="自动选择最优前沿点作为导航目标")
 
 sys.path.append(os.path.join(os.getcwd(), "scripts", "instinct_rl"))
 import cli_args
 cli_args.add_instinct_rl_args(parser)
+
+sys.path.append("/home/zh/isaac/liveratemodel")
+from qwen_vl_detector import RedBlockDetector, RGBDCamera, call_qwen_vl
 
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
@@ -273,8 +277,8 @@ def main():
 
         # 定义多个物体（必须是带物理属性的USD）
         test_objects = [
-            {"name": "red_block", "usd": "red_block.usd", "pos": (1.0, 1.0, 1)},
-            {"name": "blue_block", "usd": "blue_block.usd", "pos": (2.0, 1.0, 1)},
+            {"name": "red_block", "usd": "red_block.usd", "pos": (5.0, 1.0, 1.5)},
+            {"name": "blue_block", "usd": "blue_block.usd", "pos": (-1.0, 1.0, 1)},
             {"name": "green_block", "usd": "green_block.usd", "pos": (3.0, 1.0, 1)},
             {"name": "yellow_block", "usd": "yellow_block.usd", "pos": (1.0, -1.0, 1)},
         ]
@@ -554,6 +558,14 @@ def main():
     # 保存raw_env供后面循环使用
     env_scene = raw_env.scene
 
+    # 初始化 Qwen 红色方块检测器
+    qwen_detector = None
+    qwen_detect_interval = getattr(args_cli, 'qwen_detect_interval', 0)
+    if qwen_detect_interval > 0:
+        camera = RGBDCamera(rgb_width=640, rgb_height=360, depth_width=64, depth_height=32, focal_length=24.0, horizontal_aperture=20.955)
+        qwen_detector = RedBlockDetector(camera)
+        print(f"[INFO] Qwen 红色方块检测器已启用，检测间隔: {qwen_detect_interval}")
+
     keyboard_command = torch.zeros(env.num_envs, 3, device=env.device)
     keyboard_linvel_step = getattr(args_cli, 'keyboard_linvel_step', 0.5)
     keyboard_angvel = getattr(args_cli, 'keyboard_angvel', 1.0)
@@ -670,6 +682,13 @@ def main():
             except Exception as e:
                 if timestep % 200 == 0:
                     print(f"[DEBUG] 获取深度图失败: {e}")
+                depth_np = None
+
+            # Qwen 红色方块检测
+            if qwen_detector is not None and rgb_image is not None and depth_np is not None and timestep % qwen_detect_interval == 0:
+                success, camera_3d_pos, bbox = qwen_detector.detect_from_image(rgb_image, depth_np)
+                if success:
+                    print(f"[QWEN] 检测到红色方块! 边界框: {bbox}, 相机坐标: {camera_3d_pos}")
 
             if classifier is not None and depth_np is not None:
                 fall_rate, label, terrain_name = classifier.predict(depth_np)
