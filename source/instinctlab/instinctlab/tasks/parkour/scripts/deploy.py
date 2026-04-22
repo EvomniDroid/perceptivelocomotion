@@ -266,6 +266,22 @@ def main():
         env_cfg.scene.env_spacing = 0.0
         print(f"[INFO] terrain_generator 已设置为 FRONTIER_TEST_TERRAIN_CFG, size={env_cfg.scene.terrain.terrain_generator.size}")
 
+    if getattr(args_cli, 'use_frontier_test_terrain', False) or getattr(args_cli, 'use_vis_terrain', False):
+        from isaaclab.assets import RigidObjectCfg
+        from isaaclab.sim.spawners.from_files import UsdFileCfg
+        from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+        env_cfg.scene.test_block = RigidObjectCfg(
+            prim_path="/World/envs/env_0/test_block",
+            spawn=UsdFileCfg(
+                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/red_block.usd",
+                scale=(3.0, 3.0, 3.0),
+            ),
+            init_state=RigidObjectCfg.InitialStateCfg(
+                pos=(5.0, 1.0, 1),
+            ),
+        )
+        print(f"[INFO] test_block 配置已添加到 env_cfg.scene")
+
     if getattr(args_cli, 'debug_ray', False):
         if hasattr(env_cfg.scene, 'left_height_scanner'):
             env_cfg.scene.left_height_scanner.debug_vis = True
