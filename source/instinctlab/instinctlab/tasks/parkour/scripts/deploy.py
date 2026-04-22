@@ -12,7 +12,7 @@ parser.add_argument("--task", type=str, default=None, help="任务名称")
 parser.add_argument("--num_envs", type=int, default=None, help="仿真环境数量")
 parser.add_argument("--classifier_model", type=str, default=None, help="摔倒率分类器模型路径(.pth)，不提供则只加载RL策略")
 parser.add_argument("--fall_rate_override", type=float, default=None, help="手动设置所有摔倒率值(0-1)，用于测试")
-parser.add_argument("--save_depth_interval", type=int, default=0, help="每N步保存一次深度图，0表示禁用")
+parser.add_argument("--save_fushi_depth_interval", type=int, default=0, help="每N步保存一次俯视步态深度图，0表示禁用")
 parser.add_argument("--fall_rate_threshold", type=float, default=0.5, help="切换到安全模式的摔倒率阈值")
 parser.add_argument("--use_vis_terrain", action="store_true", default=False, help="使用vis.py的地形配置进行泛化测试")
 parser.add_argument("--use_frontier_test_terrain", action="store_true", default=False, help="使用FRONTIER_TEST_TERRAIN地形（预设摔倒率的简单地形）")
@@ -531,9 +531,9 @@ def main():
 
     save_depth_dir = None
     save_depth_interval = 0
-    if getattr(args_cli, 'save_depth_interval', 0) > 0:
-        save_depth_dir = os.path.join(log_dir, "depth_images", f"run_{timestamp}_{run_id}")
-        save_depth_interval = getattr(args_cli, 'save_depth_interval', 0)
+    if getattr(args_cli, 'save_fushi_depth_interval', 0) > 0:
+        save_depth_dir = os.path.join(log_dir, "fushi_depth_images", f"run_{timestamp}_{run_id}")
+        save_depth_interval = getattr(args_cli, 'save_fushi_depth_interval', 0)
         os.makedirs(save_depth_dir, exist_ok=True)
         print(f"[INFO] 深度图保存目录: {save_depth_dir}")
 
