@@ -31,7 +31,9 @@ parser.add_argument("--frontier_interval", type=int, default=100, help="前沿�
 parser.add_argument("--frontier_save_interval", type=int, default=500, help="前沿点数据保存间隔")
 parser.add_argument("--save_rgb_interval", type=int, default=0, help="每N步保存一次RGB图像，0表示禁用")
 parser.add_argument("--qwen_detect_interval", type=int, default=0, help="Qwen实时检测红色方块间隔，0表示禁用")
+parser.add_argument("--qwen_init_interval", type=int, default=50, help="Qwen初期检测间隔（开始旋转阶段）")
 parser.add_argument("--auto_frontier_nav", action="store_true", default=False, help="自动选择最优前沿点作为导航目标")
+parser.add_argument("--scan_angvel", type=float, default=0.3, help="扫视模式角速度（弧度/秒）")
 
 sys.path.append(os.path.join(os.getcwd(), "scripts", "instinct_rl"))
 import cli_args
@@ -139,7 +141,7 @@ class FallRateClassifier:
 class MotionPlanner:
     """运动规划器接口 - 根据摔倒率和地形类型调整动作"""
 
-    def __init__(self, cfg=None, vel_debug=False, debug_vels=None, target_pos=None):
+    def __init__(self, cfg=None, vel_debug=False, debug_vels=None, target_pos=None, scan_mode=False, scan_angvel=0.3):
         self.cfg = cfg or {}
         self.safe_mode_lin_vel_scale = self.cfg.get("safe_mode_lin_vel_scale", 0.5)
         self.safe_mode_step_width = self.cfg.get("safe_mode_step_width", 0.5)
@@ -151,6 +153,11 @@ class MotionPlanner:
         self.Kp_lin = 0.5
         self.Kp_ang = 1.5
         self._keyboard_active = False
+        self.scan_mode = scan_mode
+        self.scan_angvel = scan_angvel
+        self.scan_active = scan_mode
+        self.vision_servo_active = False
+        self.vision_servo_yaw = 0.0
 
     def set_target(self, x, y, final_target=None):
         self.target_pos = (x, y)
@@ -167,8 +174,8 @@ class MotionPlanner:
         obs = self._inject_velocity(obs, command_obs_slice, vel_x, vel_y, ang_z)
         return obs
 
-    def _get_blended_velocity(self, keyboard_command, robot_pos=None, robot_yaw=None, timestep=None):
-        """混合速度选择：键盘优先，无键盘输入则用 Pure Pursuit 导航到 target_pos"""
+    def _get_blended_velocity(self, keyboard_command=None, robot_pos=None, robot_yaw=None, timestep=None):
+        """混合速度选择：键盘优先，扫视模式次之，无则用 Pure Pursuit 导航到 target_pos"""
         log_interval = 100
         if keyboard_command is not None:
             kx = keyboard_command[0, 0].item()
@@ -179,6 +186,12 @@ class MotionPlanner:
                 if timestep is None or timestep % log_interval == 0:
                     print(f"[规划] 键盘接管: vel_x={kx:.2f}, vel_y={ky:.2f}, ang_z={kz:.2f}")
                 return kx, ky, kz
+
+        if self.scan_active:
+            ang_z = self.scan_angvel
+            if timestep is None or timestep % log_interval == 0:
+                print(f"[规划] 扫视模式: ang_z={ang_z:.2f}")
+            return 0.0, 0.0, ang_z
 
         if robot_pos is not None and self.target_pos is not None:
             return self._position_to_velocity(robot_pos, robot_yaw, timestep=timestep)
@@ -219,6 +232,15 @@ class MotionPlanner:
         vel_x = self.Kp_lin * dist
         vel_x = max(0.0, min(vel_x, 0.8))
         ang_z = self.Kp_ang * rel_angle
+
+        # 如果视觉伺服激活，微调角度让目标保持在视野中央
+        if self.vision_servo_active and abs(self.vision_servo_yaw) > 0.02:
+            servo_gain = 0.1
+            ang_z = ang_z - self.vision_servo_yaw * servo_gain
+            self.vision_servo_yaw *= 0.85
+            if timestep % 20 == 0:
+                print(f"[SERVO] rel_angle={math.degrees(rel_angle):.2f}° servo={math.degrees(self.vision_servo_yaw):.2f}° ang_z={ang_z:.3f}")
+
         ang_z = max(-1.5, min(ang_z, 1.5))
 
         if abs(ang_z) > 0.1:
@@ -277,7 +299,7 @@ def main():
 
         # 定义多个物体（必须是带物理属性的USD）
         test_objects = [
-            {"name": "red_block", "usd": "red_block.usd", "pos": (5.0, 1.0, 1.5)},
+            {"name": "red_block", "usd": "red_block.usd", "pos": (5.0, 1.0, 1)},
             {"name": "blue_block", "usd": "blue_block.usd", "pos": (-1.0, 1.0, 1)},
             {"name": "green_block", "usd": "green_block.usd", "pos": (3.0, 1.0, 1)},
             {"name": "yellow_block", "usd": "yellow_block.usd", "pos": (1.0, -1.0, 1)},
@@ -545,6 +567,14 @@ def main():
         os.makedirs(save_rgb_dir, exist_ok=True)
         print(f"[INFO] RGB图像保存目录: {save_rgb_dir}")
 
+    save_rgb_depth_dir = None
+    save_rgb_depth_interval = 0
+    if getattr(args_cli, 'save_rgb_interval', 0) > 0:
+        save_rgb_depth_dir = os.path.join(log_dir, "depth_images", f"run_{timestamp}_{run_id}")
+        save_rgb_depth_interval = getattr(args_cli, 'save_rgb_interval', 0)
+        os.makedirs(save_rgb_depth_dir, exist_ok=True)
+        print(f"[INFO] RGB相机深度图保存目录: {save_rgb_depth_dir}")
+
     obs, _ = env.get_observations()
     timestep = 0
 
@@ -562,9 +592,15 @@ def main():
     qwen_detector = None
     qwen_detect_interval = getattr(args_cli, 'qwen_detect_interval', 0)
     if qwen_detect_interval > 0:
-        camera = RGBDCamera(rgb_width=640, rgb_height=360, depth_width=64, depth_height=32, focal_length=24.0, horizontal_aperture=20.955)
+        camera = RGBDCamera(rgb_width=640, rgb_height=320, depth_width=640, depth_height=320, focal_length=24.0, horizontal_aperture=20.955)
         qwen_detector = RedBlockDetector(camera)
         print(f"[INFO] Qwen 红色方块检测器已启用，检测间隔: {qwen_detect_interval}")
+
+    scan_angvel = getattr(args_cli, 'scan_angvel', 0.3)
+    if qwen_detector is not None and getattr(args_cli, 'auto_frontier_nav', False):
+        planner.scan_mode = True
+        planner.scan_angvel = scan_angvel
+        print(f"[INFO] 扫视模式已启用，角速度: {scan_angvel}")
 
     keyboard_command = torch.zeros(env.num_envs, 3, device=env.device)
     keyboard_linvel_step = getattr(args_cli, 'keyboard_linvel_step', 0.5)
@@ -618,6 +654,7 @@ def main():
         while True:
             depth_np = None
             rgb_image = None
+            rgb_depth_np = None
             
             # 读取 RGB 相机图像
             try:
@@ -653,42 +690,136 @@ def main():
                         print(f"[DEBUG] 显示 RGB 图像失败：{e}")
             
             try:
-                depth_data = raw_env.scene["camera"].data.output["distance_to_image_plane"]
+                rgb_depth_data = raw_env.scene["rgb_camera"].data.output["distance_to_image_plane"]
                 if timestep % 200 == 0:
-                    print(f"[DEBUG] depth_data type={type(depth_data)}, len={len(depth_data) if hasattr(depth_data, '__len__') else 'N/A'}")
-                if depth_data is not None and len(depth_data) > 0:
-                    depth_np = depth_data[0].cpu().numpy()
+                    print(f"[DEBUG] rgb_camera depth type={type(rgb_depth_data)}, len={len(rgb_depth_data) if hasattr(rgb_depth_data, '__len__') else 'N/A'}")
+                if rgb_depth_data is not None and len(rgb_depth_data) > 0:
+                    rgb_depth_np = rgb_depth_data[0].cpu().numpy()
+                    if rgb_depth_np.ndim == 3:
+                        rgb_depth_np = rgb_depth_np.squeeze(-1)
+                    rgb_depth_np = np.nan_to_num(rgb_depth_np, nan=0.0, posinf=100.0, neginf=0.0)
+
+                    # 保存RGB相机深度图
+                    if save_rgb_depth_dir is not None and save_rgb_depth_interval > 0 and timestep % save_rgb_depth_interval == 0:
+                        fixed_min, fixed_max = 0.0, 10.0
+                        depth_clipped = np.clip(rgb_depth_np, fixed_min, fixed_max)
+                        depth_normalized = ((depth_clipped - fixed_min) / (fixed_max - fixed_min) * 255).astype(np.uint8)
+                        depth_filename = os.path.join(save_rgb_depth_dir, f"rgb_depth_t{timestep}.png")
+                        cv2.imwrite(depth_filename, depth_normalized)
+                        depth_colored = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
+                        depth_colored_rgb = cv2.cvtColor(depth_colored, cv2.COLOR_BGR2RGB)
+                        depth_colored_filename = os.path.join(save_rgb_depth_dir, f"rgb_depth_color_t{timestep}.png")
+                        cv2.imwrite(depth_colored_filename, depth_colored_rgb)
+                else:
+                    rgb_depth_np = None
+                    if timestep % 200 == 0:
+                        print(f"[DEBUG] RGB相机深度数据为空或无效")
+            except Exception as e:
+                if timestep % 200 == 0:
+                    print(f"[DEBUG] 获取RGB相机深度图失败: {e}")
+                rgb_depth_np = None
+
+            # 读取俯视深度图（给分类器用）
+            try:
+                fushi_depth_data = raw_env.scene["camera"].data.output["distance_to_image_plane"]
+                if fushi_depth_data is not None and len(fushi_depth_data) > 0:
+                    depth_np = fushi_depth_data[0].cpu().numpy()
                     if depth_np.ndim == 3:
                         depth_np = depth_np.squeeze(-1)
                     depth_np = np.nan_to_num(depth_np, nan=0.0, posinf=10.0, neginf=0.0)
 
-                    # 保存深度图
+                    # 保存俯视深度图
                     if save_depth_dir is not None and save_depth_interval > 0 and timestep % save_depth_interval == 0:
-                        # 使用固定深度范围归一化（0-5 米），避免每帧独立归一化导致对比度差
                         fixed_min, fixed_max = 0.0, 5.0
                         depth_clipped = np.clip(depth_np, fixed_min, fixed_max)
                         depth_normalized = ((depth_clipped - fixed_min) / (fixed_max - fixed_min) * 255).astype(np.uint8)
-                        # 保存灰度图
                         depth_filename = os.path.join(save_depth_dir, f"depth_t{timestep}.png")
                         cv2.imwrite(depth_filename, depth_normalized)
-                        # 保存彩色图（JET colormap）
                         depth_colored = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
                         depth_colored_rgb = cv2.cvtColor(depth_colored, cv2.COLOR_BGR2RGB)
                         depth_colored_filename = os.path.join(save_depth_dir, f"depth_color_t{timestep}.png")
                         cv2.imwrite(depth_colored_filename, depth_colored_rgb)
-                else:
-                    if timestep % 200 == 0:
-                        print(f"[DEBUG] 深度数据为空或无效")
             except Exception as e:
                 if timestep % 200 == 0:
-                    print(f"[DEBUG] 获取深度图失败: {e}")
-                depth_np = None
+                    print(f"[DEBUG] 获取俯视深度图失败: {e}")
 
-            # Qwen 红色方块检测
-            if qwen_detector is not None and rgb_image is not None and depth_np is not None and timestep % qwen_detect_interval == 0:
-                success, camera_3d_pos, bbox = qwen_detector.detect_from_image(rgb_image, depth_np)
+            # Qwen 红色方块检测（使用RGB相机同视角深度）
+            # 初期(前200步)用更短间隔检测，因为机器人旋转时视野变化快
+            qwen_init_interval = getattr(args_cli, 'qwen_init_interval', 50)
+            if timestep < 200:
+                effective_interval = qwen_init_interval
+            else:
+                effective_interval = qwen_detect_interval
+
+            if qwen_detector is not None and rgb_image is not None and rgb_depth_np is not None and effective_interval > 0 and timestep % effective_interval == 0:
+                success, camera_3d_pos, bbox = qwen_detector.detect_from_image(rgb_image, rgb_depth_np)
                 if success:
-                    print(f"[QWEN] 检测到红色方块! 边界框: {bbox}, 相机坐标: {camera_3d_pos}")
+                    # 获取机器人位置和朝向
+                    try:
+                        robot_entity = env_scene["robot"]
+                        root_pos = robot_entity.data.root_link_pos_w[0].cpu().numpy()
+                        root_quat = robot_entity.data.root_quat_w[0].cpu().numpy()
+                        env_origin = raw_env.scene.env_origins[0].cpu().numpy()
+
+                        # 与frontier一致：robot_pos是相对于env_origin的位置
+                        robot_world_x = root_pos[0] - env_origin[0]
+                        robot_world_y = root_pos[1] - env_origin[1]
+
+                        # 计算 robot yaw (与前沿点一致)
+                        q = root_quat
+                        w, x, y, z = q[0], q[1], q[2], q[3]
+                        robot_yaw = math.atan2(2.0*(w*z + x*y), 1.0 - 2.0*(y*y + z*z))
+
+                        # 相机在机器人上的偏移 (torso_link上, offset pos=(0,0,0.5))
+                        camera_offset = np.array([0.0, 0.0, 0.5])
+
+                        # 计算相机世界位置
+                        cos_yaw, sin_yaw = math.cos(robot_yaw), math.sin(robot_yaw)
+                        R = np.array([
+                            [cos_yaw, -sin_yaw, 0],
+                            [sin_yaw,  cos_yaw, 0],
+                            [0,         0,        1]
+                        ])
+                        camera_offset_world = R @ camera_offset
+                        camera_world_x = robot_world_x + camera_offset_world[0]
+                        camera_world_y = robot_world_y + camera_offset_world[1]
+
+                        # 相机坐标转世界坐标
+                        # camera_3d_pos: [X右, Y下, Z前]
+                        # frontier坐标系: X朝东, Y朝北
+                        # 相机前(Z)对应世界X，相机右(X)对应世界Y
+                        target_local_x = camera_3d_pos[2]
+                        target_local_z = camera_3d_pos[0]
+
+                        # 旋转公式：标准2D旋转
+                        target_world_x = robot_world_x + target_local_x * cos_yaw - target_local_z * sin_yaw
+                        target_world_y = robot_world_y + target_local_x * sin_yaw + target_local_z * cos_yaw
+
+                        print(f"[QWEN] 检测到红色方块! 边界框: {bbox}")
+                        print(f"[QWEN] 深度: {camera_3d_pos[2]:.3f}m")
+                        print(f"[QWEN] robot=({robot_world_x:.3f}, {robot_world_y:.3f}), yaw={math.degrees(robot_yaw):.1f}°")
+                        print(f"[QWEN] camera_3d=({camera_3d_pos[0]:.3f}, {camera_3d_pos[1]:.3f}, {camera_3d_pos[2]:.3f})")
+                        print(f"[QWEN] 目标世界坐标: ({target_world_x:.3f}, {target_world_y:.3f})")
+
+                        # 视觉伺服：计算目标相对于图像中心的偏移角度
+                        u_center = (bbox[0] + bbox[2]) // 2
+                        v_center = (bbox[1] + bbox[3]) // 2
+                        du = u_center - camera.cx
+                        dv = v_center - camera.cy
+                        angle_x = math.atan2(du, camera.fx)
+                        angle_y = math.atan2(dv, camera.fy)
+                        planner.vision_servo_yaw = angle_x
+                        planner.vision_servo_active = True
+                        print(f"[QWEN] 视觉伺服: 目标偏移角度={math.degrees(angle_x):.2f}° (du={du}, fx={camera.fx:.1f})")
+
+                        # 自动更新planner的target_pos
+                        planner.target_pos = (float(target_world_x), float(target_world_y))
+                        planner.final_target = (float(target_world_x), float(target_world_y))
+                        planner.scan_active = False
+                        print(f"[QWEN] 已更新target_pos为: ({target_world_x:.3f}, {target_world_y:.3f}), 停止扫视")
+                    except Exception as e:
+                        print(f"[QWEN] 坐标转换失败: {e}")
+                        print(f"[QWEN] 检测到红色方块! 边界框: {bbox}, 相机坐标: {camera_3d_pos}")
 
             if classifier is not None and depth_np is not None:
                 fall_rate, label, terrain_name = classifier.predict(depth_np)
@@ -703,7 +834,7 @@ def main():
 
             if timestep == 0:
                 print(f"[DEBUG] ===== 部署开始 =====")
-                print(f"[DEBUG] target_pos: ({target_pos[0]}, {target_pos[1]})")
+                print(f"[DEBUG] target_pos: ({target_pos[0]}, {target_pos[1]})" if target_pos else "[DEBUG] target_pos: None (使用前沿导航)")
                 print(f"[DEBUG] spawn_pos: {spawn_pos_str}")
                 print(f"[DEBUG] env_spacing: {env_cfg.scene.env_spacing}")
                 try:

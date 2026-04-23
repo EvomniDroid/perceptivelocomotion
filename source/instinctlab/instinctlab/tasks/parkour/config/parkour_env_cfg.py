@@ -193,7 +193,7 @@ class SceneCfg(InteractiveSceneCfg):
             rot=(1.0, 0.0, 0.0, 0.0),
             convention="world",
         ),
-        data_types=["rgb"],
+        data_types=["rgb", "distance_to_image_plane"],
         update_period=0.02,
     )
     # lights
