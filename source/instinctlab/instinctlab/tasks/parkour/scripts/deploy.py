@@ -31,6 +31,7 @@ parser.add_argument("--frontier_interval", type=int, default=100, help="前沿�
 parser.add_argument("--frontier_save_interval", type=int, default=500, help="前沿点数据保存间隔")
 parser.add_argument("--save_rgb_interval", type=int, default=0, help="每N步保存一次RGB图像，0表示禁用")
 parser.add_argument("--qwen_detect_interval", type=int, default=0, help="Qwen实时检测红色方块间隔，0表示禁用")
+parser.add_argument("--qwen_target_color", type=str, default="红色方块", help="Qwen检测目标描述，如'红色方块'、'蓝色方块'等")
 parser.add_argument("--qwen_init_interval", type=int, default=50, help="Qwen初期检测间隔（开始旋转阶段）")
 parser.add_argument("--auto_frontier_nav", action="store_true", default=False, help="自动选择最优前沿点作为导航目标")
 parser.add_argument("--scan_angvel", type=float, default=0.3, help="扫视模式角速度（弧度/秒）")
@@ -591,10 +592,11 @@ def main():
     # 初始化 Qwen 红色方块检测器
     qwen_detector = None
     qwen_detect_interval = getattr(args_cli, 'qwen_detect_interval', 0)
+    target_color = getattr(args_cli, 'qwen_target_color', '红色方块')
     if qwen_detect_interval > 0:
         camera = RGBDCamera(rgb_width=640, rgb_height=320, depth_width=640, depth_height=320, focal_length=24.0, horizontal_aperture=20.955)
         qwen_detector = RedBlockDetector(camera)
-        print(f"[INFO] Qwen 红色方块检测器已启用，检测间隔: {qwen_detect_interval}")
+        print(f"[INFO] Qwen 检测器已启用，检测间隔: {qwen_detect_interval}, 目标: {target_color}")
 
     scan_angvel = getattr(args_cli, 'scan_angvel', 0.3)
     if qwen_detector is not None and getattr(args_cli, 'auto_frontier_nav', False):
@@ -752,7 +754,7 @@ def main():
                 effective_interval = qwen_detect_interval
 
             if qwen_detector is not None and rgb_image is not None and rgb_depth_np is not None and effective_interval > 0 and timestep % effective_interval == 0:
-                success, camera_3d_pos, bbox = qwen_detector.detect_from_image(rgb_image, rgb_depth_np)
+                success, camera_3d_pos, bbox = qwen_detector.detect_from_image(rgb_image, rgb_depth_np, target_color)
                 if success:
                     # 获取机器人位置和朝向
                     try:
