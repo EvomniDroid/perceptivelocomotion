@@ -304,13 +304,17 @@ def main():
             {"name": "blue_block", "usd": "blue_block.usd", "pos": (-1.0, 1.0, 1)},
             {"name": "green_block", "usd": "green_block.usd", "pos": (3.0, 1.0, 1)},
             {"name": "yellow_block", "usd": "yellow_block.usd", "pos": (1.0, -1.0, 1)},
+            {"name": "orange_physics", "usd": "/home/zh/isaac/assets/props/orange_01/orange_physics.usd", "pos": (3.0, 3.0, 1)},
         ]
 
         for obj in test_objects:
+            usd_path = obj["usd"]
+            if not usd_path.startswith("/"):
+                usd_path = f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/{usd_path}"
             setattr(env_cfg.scene, obj["name"], RigidObjectCfg(
                 prim_path=f"/World/envs/env_0/{obj['name']}",
                 spawn=UsdFileCfg(
-                    usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/{obj['usd']}",
+                    usd_path=usd_path,
                     scale=(3.0, 3.0, 3.0),
                 ),
                 init_state=RigidObjectCfg.InitialStateCfg(pos=obj["pos"]),
@@ -385,7 +389,7 @@ def main():
     
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if getattr(args_cli, 'video', False) else None)
     print("[DEBUG] 2. gym.make 完成")
-    
+
     if getattr(args_cli, 'use_frontier_test_terrain', False) or getattr(args_cli, 'use_vis_terrain', False):
         print("[DEBUG] 2a. 强制设置固定的 env_origins 和 terrain_levels")
         raw_env = env.unwrapped
