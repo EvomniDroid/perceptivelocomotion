@@ -4,8 +4,39 @@ import argparse
 import math
 import os
 import sys
-
+import io
+import atexit
 from isaaclab.app import AppLauncher
+
+class Tee(io.TextIOWrapper):
+    def __init__(self, file_fp):
+        super().__init__(file_fp.buffer if hasattr(file_fp, 'buffer') else file_fp, encoding='utf-8')
+        self._file = file_fp
+        self._original_stdout = sys.__stdout__
+
+    def write(self, text):
+        super().write(text)
+        self._original_stdout.write(text)
+        self.flush()
+        self._original_stdout.flush()
+        return len(text)
+
+    def flush(self):
+        super().flush()
+        if hasattr(self._file, 'flush'):
+            self._file.flush()
+
+_terminal_log_fp = None
+_original_stdout = None
+
+def restore_stdout():
+    global _terminal_log_fp, _original_stdout
+    if _original_stdout is not None:
+        sys.stdout.flush()
+        sys.stdout = _original_stdout
+        print(f"[INFO] 终端日志记录已结束")
+    if _terminal_log_fp is not None:
+        _terminal_log_fp.close()
 
 parser = argparse.ArgumentParser(description="部署RL智能体，包含摔倒率分类器和运动规划器")
 parser.add_argument("--task", type=str, default=None, help="任务名称")
@@ -33,6 +64,8 @@ parser.add_argument("--save_rgb_interval", type=int, default=0, help="每N步保
 parser.add_argument("--qwen_detect_interval", type=int, default=0, help="Qwen实时检测红色方块间隔，0表示禁用")
 parser.add_argument("--qwen_target_color", type=str, default="红色方块", help="Qwen检测目标描述，如'红色方块'、'蓝色方块'等")
 parser.add_argument("--qwen_init_interval", type=int, default=50, help="Qwen初期检测间隔（开始旋转阶段）")
+parser.add_argument("--fall_rate_penalty", type=float, default=1.0, help="摔倒率惩罚系数，0表示不考虑地形，1表示严格按摔倒率绕路")
+parser.add_argument("--urgency_ref_dist", type=float, default=3.0, help="urgency参考距离(米)，用于计算目标紧迫度")
 parser.add_argument("--auto_frontier_nav", action="store_true", default=False, help="自动选择最优前沿点作为导航目标")
 parser.add_argument("--scan_angvel", type=float, default=0.3, help="扫视模式角速度（弧度/秒）")
 
@@ -552,6 +585,18 @@ def main():
     os.makedirs(frontier_save_dir, exist_ok=True)
     print(f"[INFO] 前沿数据保存目录: {frontier_save_dir}")
 
+    terminal_save_dir = os.path.join(log_dir, "terminal", f"run_{timestamp}_{run_id}")
+    os.makedirs(terminal_save_dir, exist_ok=True)
+    terminal_log_file = os.path.join(terminal_save_dir, "terminal.log")
+    global _terminal_log_fp, _original_stdout
+    _terminal_log_fp = open(terminal_log_file, 'w')
+    print(f"[INFO] 终端日志保存文件: {terminal_log_file}")
+
+    _original_stdout = sys.stdout
+    sys.stdout = Tee(_terminal_log_fp)
+    atexit.register(restore_stdout)
+    print(f"[INFO] 终端日志记录已启动: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
     if use_preset_fall_rate:
         fall_rate_map_path = os.path.join(frontier_save_dir, "preset_fall_rate_map.json")
         fall_rate_map.save_preset_map(fall_rate_map_path)
@@ -610,6 +655,12 @@ def main():
 
     keyboard_command = torch.zeros(env.num_envs, 3, device=env.device)
     keyboard_linvel_step = getattr(args_cli, 'keyboard_linvel_step', 0.5)
+
+    from fusion_cost import FusionCostCalculator
+    fall_rate_penalty = getattr(args_cli, 'fall_rate_penalty', 1.0)
+    urgency_ref_dist = getattr(args_cli, 'urgency_ref_dist', 3.0)
+    fusion_calculator = FusionCostCalculator(fall_rate_penalty=fall_rate_penalty, urgency_reference_dist=urgency_ref_dist)
+    print(f"[INFO] Fusion成本计算器已初始化: fall_rate_penalty={fall_rate_penalty}, urgency_ref_dist={urgency_ref_dist}m")
     keyboard_angvel = getattr(args_cli, 'keyboard_angvel', 1.0)
 
     emergency_stop = False
@@ -801,7 +852,7 @@ def main():
                         target_world_x = robot_world_x + target_local_x * cos_yaw - target_local_z * sin_yaw
                         target_world_y = robot_world_y + target_local_x * sin_yaw + target_local_z * cos_yaw
 
-                        print(f"[QWEN] 检测到红色方块! 边界框: {bbox}")
+                        print(f"[QWEN] 检测到目标物体! 边界框: {bbox}")
                         print(f"[QWEN] 深度: {camera_3d_pos[2]:.3f}m")
                         print(f"[QWEN] robot=({robot_world_x:.3f}, {robot_world_y:.3f}), yaw={math.degrees(robot_yaw):.1f}°")
                         print(f"[QWEN] camera_3d=({camera_3d_pos[0]:.3f}, {camera_3d_pos[1]:.3f}, {camera_3d_pos[2]:.3f})")
@@ -818,14 +869,15 @@ def main():
                         planner.vision_servo_active = True
                         print(f"[QWEN] 视觉伺服: 目标偏移角度={math.degrees(angle_x):.2f}° (du={du}, fx={camera.fx:.1f})")
 
-                        # 自动更新planner的target_pos
-                        planner.target_pos = (float(target_world_x), float(target_world_y))
-                        planner.final_target = (float(target_world_x), float(target_world_y))
+                        # 保存Qwen目标位置，供fusion计算使用
+                        qwen_target_pos = (float(target_world_x), float(target_world_y))
+                        planner.target_pos = qwen_target_pos
+                        planner.final_target = qwen_target_pos
                         planner.scan_active = False
                         print(f"[QWEN] 已更新target_pos为: ({target_world_x:.3f}, {target_world_y:.3f}), 停止扫视")
                     except Exception as e:
                         print(f"[QWEN] 坐标转换失败: {e}")
-                        print(f"[QWEN] 检测到红色方块! 边界框: {bbox}, 相机坐标: {camera_3d_pos}")
+                        print(f"[QWEN] 检测到目标物体! 边界框: {bbox}, 相机坐标: {camera_3d_pos}")
 
             if classifier is not None and depth_np is not None:
                 fall_rate, label, terrain_name = classifier.predict(depth_np)
@@ -911,6 +963,16 @@ def main():
                     else:
                         dist_to_goal = 0.0
 
+                    has_danger_ahead = False
+                    danger_dist = 0.0
+                    if final_target is not None:
+                        has_danger_ahead, danger_dist, max_danger = fusion_calculator.predict_danger_ahead(
+                            robot_pos[0], robot_pos[1], fx, fy,
+                            lambda x, y: fall_rate_map.get_fall_rate_at(x, y, robot_pos[0], robot_pos[1])
+                        )
+                        if has_danger_ahead and timestep % 500 == 0:
+                            print(f"[PREDICT] 前方危险! has_danger={has_danger_ahead}, first_danger_dist={danger_dist:.2f}m, max_danger={max_danger:.2f}")
+
                     for f in frontiers:
                         f['fall_rate'] = fall_rate_map.get_fall_rate_at(f['x'], f['y'], robot_pos[0], robot_pos[1])
 
@@ -934,12 +996,27 @@ def main():
                         else:
                             direction_score = 1.0
 
+                        direction_penalty = 1.0
+                        if final_target is not None and has_danger_ahead:
+                            direction_penalty = fusion_calculator.calculate_direction_penalty(
+                                f['x'], f['y'], robot_pos[0], robot_pos[1],
+                                fx, fy, has_danger_ahead, danger_dist
+                            )
+
                         conf_val = float(f['conf']) if f['conf'] is not None else 0.5
                         conf_val = max(0.1, min(2.0, conf_val))
                         fr_val = max(0.0, min(1.0, f['fall_rate']))
                         dist_val = max(0.3, float(f['dist']))
                         dist_score = min(1.0, 3.0 / dist_val) if dist_val > 0 else 0
-                        f['score'] = conf_val * direction_score * direction_score * (1.0 - fr_val) * dist_score
+
+                        qwen_target_dist = dist_to_goal if dist_to_goal > 0 else 3.0
+                        urgency = fusion_calculator.calculate_urgency(qwen_target_dist)
+                        fall_weight = fall_rate_penalty * urgency
+                        fall_factor = 1.0 - fall_weight * fr_val
+
+                        f['score'] = conf_val * direction_score * direction_score * fall_factor * dist_score * direction_penalty
+                        if timestep % 500 == 0:
+                            print(f"[FUSION] urgency={urgency:.3f}, fall_weight={fall_weight:.3f}, fall_factor={fall_factor:.3f}, dir_penalty={direction_penalty:.3f}, score={f['score']:.3f}")
 
                     frontiers.sort(key=lambda x: x['score'], reverse=True)
 
