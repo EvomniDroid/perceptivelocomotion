@@ -61,6 +61,7 @@ parser.add_argument("--frontier_debug", action="store_true", default=False, help
 parser.add_argument("--frontier_interval", type=int, default=100, help="前沿点打印间隔")
 parser.add_argument("--frontier_save_interval", type=int, default=500, help="前沿点数据保存间隔")
 parser.add_argument("--save_rgb_interval", type=int, default=0, help="每N步保存一次RGB图像，0表示禁用")
+parser.add_argument("--save_record_rgb_interval", type=int, default=0, help="每N步保存一次训练用RGB图像，0表示禁用")
 parser.add_argument("--qwen_detect_interval", type=int, default=0, help="Qwen实时检测红色方块间隔，0表示禁用")
 parser.add_argument("--qwen_target_color", type=str, default="红色方块", help="Qwen检测目标描述，如'红色方块'、'蓝色方块'等")
 parser.add_argument("--qwen_init_interval", type=int, default=50, help="Qwen初期检测间隔（开始旋转阶段）")
@@ -625,6 +626,16 @@ def main():
         os.makedirs(save_rgb_depth_dir, exist_ok=True)
         print(f"[INFO] RGB相机深度图保存目录: {save_rgb_depth_dir}")
 
+    save_record_rgb_dir = None
+    save_record_rgb_interval = 0
+    if getattr(args_cli, 'save_record_rgb_interval', 0) > 0:
+        save_record_rgb_dir = os.path.join(log_dir, "record", f"run_{timestamp}_{run_id}")
+        save_record_rgb_interval = getattr(args_cli, 'save_record_rgb_interval', 0)
+        os.makedirs(save_record_rgb_dir, exist_ok=True)
+        os.makedirs(os.path.join(save_record_rgb_dir, "depth"), exist_ok=True)
+        os.makedirs(os.path.join(save_record_rgb_dir, "color"), exist_ok=True)
+        print(f"[INFO] 训练RGB记录保存目录: {save_record_rgb_dir}")
+
     obs, _ = env.get_observations()
     timestep = 0
 
@@ -767,14 +778,38 @@ def main():
                         depth_colored_rgb = cv2.cvtColor(depth_colored, cv2.COLOR_BGR2RGB)
                         depth_colored_filename = os.path.join(save_rgb_depth_dir, f"rgb_depth_color_t{timestep}.png")
                         cv2.imwrite(depth_colored_filename, depth_colored_rgb)
-                else:
-                    rgb_depth_np = None
-                    if timestep % 200 == 0:
-                        print(f"[DEBUG] RGB相机深度数据为空或无效")
+
             except Exception as e:
                 if timestep % 200 == 0:
                     print(f"[DEBUG] 获取RGB相机深度图失败: {e}")
                 rgb_depth_np = None
+
+            try:
+                record_rgb_data = raw_env.scene["camera_rgb_record"].data.output
+                if "rgb" in record_rgb_data and record_rgb_data["rgb"] is not None:
+                    record_rgb = record_rgb_data["rgb"][0].cpu().numpy()
+                    record_rgb = (record_rgb * 255).astype(np.uint8) if record_rgb.max() <= 1.0 else record_rgb.astype(np.uint8)
+                    record_rgb_bgr = cv2.cvtColor(record_rgb, cv2.COLOR_RGB2BGR)
+
+                    record_depth_data = record_rgb_data.get("distance_to_image_plane")
+                    if record_depth_data is not None and len(record_depth_data) > 0:
+                        record_depth_np = record_depth_data[0].cpu().numpy()
+                        if record_depth_np.ndim == 3:
+                            record_depth_np = record_depth_np.squeeze(-1)
+                        record_depth_np = np.nan_to_num(record_depth_np, nan=0.0, posinf=100.0, neginf=0.0)
+
+                        if save_record_rgb_dir is not None and save_record_rgb_interval > 0 and timestep % save_record_rgb_interval == 0:
+                            fixed_min, fixed_max = 0.0, 10.0
+                            depth_clipped = np.clip(record_depth_np, fixed_min, fixed_max)
+                            depth_normalized = ((depth_clipped - fixed_min) / (fixed_max - fixed_min) * 255).astype(np.uint8)
+                            depth_filename = os.path.join(save_record_rgb_dir, "depth", f"record_depth_t{timestep}.png")
+                            cv2.imwrite(depth_filename, depth_normalized)
+
+                            rgb_filename = os.path.join(save_record_rgb_dir, "color", f"record_rgb_t{timestep}.png")
+                            cv2.imwrite(rgb_filename, record_rgb_bgr)
+            except Exception as e:
+                if timestep % 200 == 0:
+                    print(f"[DEBUG] 获取camera_rgb_record数据失败: {e}")
 
             # 读取俯视深度图（给分类器用）
             try:

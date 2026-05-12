@@ -179,6 +179,23 @@ class SceneCfg(InteractiveSceneCfg):
         },
         data_histories={"distance_to_image_plane_noised": 37},
     )
+    camera_rgb_record = CameraCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/torso_link/camera_rgb_record",
+        spawn=PinholeCameraCfg(
+            focal_length=24.0,
+            horizontal_aperture=20.955,
+            clipping_range=(0.01, 1e6),
+        ),
+        width=640,
+        height=360,
+        offset=CameraCfg.OffsetCfg(
+            pos=(0.0, 0.2, 1),
+            rot=(0.9114, 0.0, 0.4115, 0.0),
+            convention="world",
+        ),
+        data_types=["rgb", "distance_to_image_plane"],
+        update_period=0.02,
+    )
     rgb_camera = CameraCfg(
         prim_path="{ENV_REGEX_NS}/Robot/torso_link/rgb_camera",
         spawn=PinholeCameraCfg(
