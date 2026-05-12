@@ -15,29 +15,29 @@ from isaaclab.app import AppLauncher
 import cli_args  # isort: skip
 
 # add argparse arguments
-parser = argparse.ArgumentParser(description="Play an RL agent with Instinct-RL.")
-parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
-parser.add_argument("--video_length", type=int, default=3000, help="Length of the recorded video (in steps).")
-parser.add_argument("--video_start_step", type=int, default=0, help="Start step for the simulation.")
+parser = argparse.ArgumentParser(description="使用 Instinct-RL 播放RL智能体。")
+parser.add_argument("--video", action="store_true", default=False, help="训练时录制视频。")
+parser.add_argument("--video_length", type=int, default=3000, help="录制视频的长度(步数)。")
+parser.add_argument("--video_start_step", type=int, default=0, help="开始录制的步数。")
 parser.add_argument(
-    "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
+    "--disable_fabric", action="store_true", default=False, help="禁用fabric，使用USD I/O操作。"
 )
-parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
-parser.add_argument("--task", type=str, default=None, help="Name of the task.")
-parser.add_argument("--exportonnx", action="store_true", default=False, help="Export policy as ONNX model.")
-parser.add_argument("--useonnx", action="store_true", default=False, help="Use the exported ONNX model for inference.")
-parser.add_argument("--debug", action="store_true", default=False, help="Enable debug mode.")
-parser.add_argument("--no_resume", default=None, action="store_true", help="Force play in no resume mode.")
-# custom play arguments
-parser.add_argument("--env_cfg", action="store_true", default=False, help="Load configuration from file.")
-parser.add_argument("--agent_cfg", action="store_true", default=False, help="Load configuration from file.")
-parser.add_argument("--sample", action="store_true", default=False, help="Sample actions instead of using the policy.")
-parser.add_argument("--zero_act_until", type=int, default=0, help="Zero actions until this timestep.")
-parser.add_argument("--keyboard_control", action="store_true", default=False, help="Enable keyboard control.")
-parser.add_argument("--keyboard_linvel_step", type=float, default=0.5, help="Linear velocity change per keyboard step.")
-parser.add_argument("--keyboard_angvel", type=float, default=1.0, help="Angular velocity set by keyboard.")
-parser.add_argument("--debug_ray", action="store_true", default=False, help="Enable raycaster visualization.")
-parser.add_argument("--save_depth_interval", type=int, default=0, help="Save depth image every N steps. 0 means disabled.")
+parser.add_argument("--num_envs", type=int, default=None, help="仿真环境数量。")
+parser.add_argument("--task", type=str, default=None, help="任务名称。")
+parser.add_argument("--exportonnx", action="store_true", default=False, help="将策略导出为ONNX模型。")
+parser.add_argument("--useonnx", action="store_true", default=False, help="使用ONNX模型进行推理。")
+parser.add_argument("--debug", action="store_true", default=False, help="启用调试模式。")
+parser.add_argument("--no_resume", default=None, action="store_true", help="强制使用no_resume模式。")
+parser.add_argument("--env_cfg", action="store_true", default=False, help="从文件加载环境配置。")
+parser.add_argument("--agent_cfg", action="store_true", default=False, help="从文件加载智能体配置。")
+parser.add_argument("--sample", action="store_true", default=False, help="使用随机采样动作而非策略。")
+parser.add_argument("--zero_act_until", type=int, default=0, help="到指定步数前动作为零。")
+parser.add_argument("--keyboard_control", action="store_true", default=False, help="启用键盘控制。")
+parser.add_argument("--keyboard_linvel_step", type=float, default=0.5, help="键盘每次调整的线速度增量。")
+parser.add_argument("--keyboard_angvel", type=float, default=1.0, help="键盘控制的角速度。")
+parser.add_argument("--debug_ray", action="store_true", default=False, help="启用射线检测可视化。")
+parser.add_argument("--save_depth_interval", type=int, default=0, help="每N步保存一次俯视深度图，0表示禁用。")
+parser.add_argument("--save_record_rgb_interval", type=int, default=0, help="每N步保存一次camera_rgb_record的RGB和深度图，0表示禁用。")
 
 # append Instinct-RL cli arguments
 cli_args.add_instinct_rl_args(parser)
@@ -46,6 +46,8 @@ AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 # always enable cameras to record video
 if args_cli.video:
+    args_cli.enable_cameras = True
+if args_cli.save_record_rgb_interval > 0:
     args_cli.enable_cameras = True
 
 print(f"[DEBUG] args_cli.video = {args_cli.video}")
@@ -146,12 +148,24 @@ def main():
     import time
     run_id = time.strftime("%Y%m%d_%H%M%S")
     save_depth_dir = None
+    save_record_rgb_dir = None
+
+    if args_cli.save_depth_interval > 0 or args_cli.save_record_rgb_interval > 0:
+        depth_run_dir = os.path.join(log_dir, f"depth_run_{run_id}")
+        os.makedirs(depth_run_dir, exist_ok=True)
+        print(f"[INFO] Depth run directory: {depth_run_dir}")
+
     if args_cli.save_depth_interval > 0:
-        save_depth_dir = os.path.join(log_dir, f"depth_images_{run_id}")
+        save_depth_dir = os.path.join(depth_run_dir, "raycaster")
         os.makedirs(save_depth_dir, exist_ok=True)
-        print(f"[INFO] Saving depth images to: {save_depth_dir}")
+        print(f"[INFO] Saving raycaster depth to: {save_depth_dir}")
         print(f"[INFO] Will save every {args_cli.save_depth_interval} steps")
-        print(f"[INFO] Run ID: {run_id}")
+
+    if args_cli.save_record_rgb_interval > 0:
+        save_record_rgb_dir = os.path.join(depth_run_dir, "rgbd_record")
+        os.makedirs(save_record_rgb_dir, exist_ok=True)
+        print(f"[INFO] Saving rgbd_record to: {save_record_rgb_dir}")
+        print(f"[INFO] Will save every {args_cli.save_record_rgb_interval} steps")
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
@@ -340,6 +354,39 @@ def main():
                     print(f"[ERROR] timestep {timestep}: failed to save depth image: {e}")
                     import traceback
                     traceback.print_exc()
+
+            if save_record_rgb_dir is not None and timestep % args_cli.save_record_rgb_interval == 0:
+                try:
+                    record_rgb_data = env.unwrapped.scene["camera_rgb_record"].data.output
+                    if "rgb" in record_rgb_data and record_rgb_data["rgb"] is not None:
+                        record_rgb = record_rgb_data["rgb"][0].cpu().numpy()
+                        record_rgb = (record_rgb * 255).astype(np.uint8) if record_rgb.max() <= 1.0 else record_rgb.astype(np.uint8)
+                        record_rgb_bgr = cv2.cvtColor(record_rgb, cv2.COLOR_RGB2BGR)
+
+                        record_depth_data = record_rgb_data.get("distance_to_image_plane")
+                        if record_depth_data is not None and len(record_depth_data) > 0:
+                            record_depth_np = record_depth_data[0].cpu().numpy()
+                            if record_depth_np.ndim == 3:
+                                record_depth_np = record_depth_np.squeeze(-1)
+                            record_depth_np = np.nan_to_num(record_depth_np, nan=0.0, posinf=100.0, neginf=0.0)
+
+                            terrain_type_list = getattr(env.unwrapped, "terrain_type_list", [])
+                            terrain_type = terrain_type_list[0] if len(terrain_type_list) > 0 else "unknown"
+                            env_save_dir = os.path.join(save_record_rgb_dir, terrain_type)
+                            os.makedirs(env_save_dir, exist_ok=True)
+
+                            fixed_min, fixed_max = 0.0, 10.0
+                            depth_clipped = np.clip(record_depth_np, fixed_min, fixed_max)
+                            depth_normalized = ((depth_clipped - fixed_min) / (fixed_max - fixed_min) * 255).astype(np.uint8)
+
+                            depth_filename = os.path.join(env_save_dir, f"record_t{timestep}_depth.png")
+                            cv2.imwrite(depth_filename, depth_normalized)
+
+                            rgb_filename = os.path.join(env_save_dir, f"record_t{timestep}_rgb.png")
+                            cv2.imwrite(rgb_filename, record_rgb_bgr)
+                except Exception as e:
+                    if timestep % 200 == 0:
+                        print(f"[DEBUG] Failed to save camera_rgb_record: {e}")
 
             timestep += 1
 
