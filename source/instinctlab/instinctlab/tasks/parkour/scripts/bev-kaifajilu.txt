@@ -1,0 +1,124 @@
+# BEV摔倒率开发记录
+
+## 目标
+将深度图转换为鸟瞰图(BEV)，叠加摔倒率地图，用于机器人局部路径规划。
+
+## 当前状态
+已完成BEV转换流程，摔倒率地图待完整集成。
+
+## 技术细节
+
+### 相机内参
+```
+fx: 720.6
+fy: 820.1
+cx: 320.0
+cy: 160.0
+分辨率: 640 × 360
+```
+
+### 深度图转BEV流程
+
+1. **读取深度图**: 归一化PNG (0-255) → 反算米深度 (depth / 255 * 10.0)
+2. **像素→相机坐标**:
+   - x_cam = (cx - u) * depth / fx
+   - y_cam = (v - cy) * depth / fy
+   - z_cam = depth
+3. **相机→地面坐标**:
+   - x_flat = x_cam
+   - y_flat = z_cam (深度方向)
+   - z_flat = abs(y_cam)
+4. **地面→世界坐标** (假设相机水平安装，高度0.5m):
+   - world_x = x_flat * cos(yaw) - y_flat * sin(yaw) + robot_x
+   - world_y = x_flat * sin(yaw) + y_flat * cos(yaw) + robot_y
+5. **BEV网格填充**: 根据世界坐标填充对应的BEV像素
+
+### BEV参数
+```
+BEV范围: X[-2, 2]m, Y[0, 4]m (机器人前方4米)
+BEV分辨率: 0.01m/pixel
+BEV尺寸: 400 × 400 像素
+```
+
+### 摔倒率地图
+```python
+def get_preset_fall_rate(world_x, world_y):
+    """预设摔倒率"""
+    in_danger_zone = (3.5 <= world_x <= 4.5 and 1.5 <= world_y <= 2.5)
+    return 0.8 if in_danger_zone else 0.1
+```
+
+## 已生成文件
+
+### 脚本
+- `/home/zh/isaac/instinctlab/source/instinctlab/instinctlab/tasks/parkour/scripts/bev.py`
+
+### 测试数据
+- 输入: `/home/zh/isaac/liveratemodel/data/zhengshi/rgb_depth_color_t10.png`
+- BEV结果: `/home/zh/isaac/liveratemodel/data/zhengshi/bev_color.png`
+
+## 存在的问题
+
+### 1. 坐标系问题
+之前的BEV生成代码坐标系理解有误，导致BEV全黑。
+已修复，但需要进一步验证。
+
+### 2. 深度图覆盖范围
+测试深度图拍摄时机器人位置可能不在危险区附近，导致BEV上看不到危险区。
+需要重新采集数据或调整机器人位置。
+
+### 3. 摔倒率映射
+目前摔倒率地图是预设的，需要与BEV坐标精确对齐。
+
+## 下一步计划
+
+### 方案A: CNN回归摔倒率网格
+```
+输入: 640×360 深度图
+输出: 5×5 摔倒率网格
+模型: ResNet18 + 1×1 Conv
+训练: 监督学习，标签来自预设摔倒率地图
+部署: 64×36 深度图 upscale 到 640×360
+```
+
+### 方案B: 直接使用深度特征
+```
+输入: 640×360 深度图
+输出: 每像素摔倒率
+模型: U-Net 类似结构
+标签: 摔倒率地图投影到图像平面
+```
+
+### 推荐方案A
+理由:
+1. 5×5网格足够局部规划
+2. 模型小、推理快
+3. 标签生成简单
+
+## 使用方法
+
+```python
+# bev.py 使用示例
+from bev import depth_to_bev_with_fallback
+
+bev_depth, bev_fall_rate = depth_to_bev_with_fallback(depth_path)
+# bev_depth: 400×400 深度图(米)
+# bev_fall_rate: 400×400 摔倒率图(0.0~0.8)
+```
+
+## 导航集成思路
+
+```
+实时深度图(camera) → BEV转换 → 摔倒率网格
+                                         ↓
+全局摔倒率地图 ← 坐标对齐 ← 相对机器人位置
+                                         ↓
+                                  路径规划算法
+                                         ↓
+                                  导航控制指令
+```
+
+## 待验证
+1. BEV坐标与摔倒率地图的对齐准确性
+2. CNN模型的训练流程
+3. 部署时64×36 upscale到640×360的效果
