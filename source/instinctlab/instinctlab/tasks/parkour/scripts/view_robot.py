@@ -1,6 +1,6 @@
 """查看机器人的简单脚本 - 支持 b2 / g1 / b2rm，WASD 给推力"""
 # python source/instinctlab/instinctlab/tasks/parkour/scripts/view_robot.py b2rm fix_base
-#
+# python source/instinctlab/instinctlab/tasks/parkour/scripts/view_robot.py b2rm 
 from isaaclab.app import AppLauncher
 
 app_launcher = AppLauncher(headless=False)
