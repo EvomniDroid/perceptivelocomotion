@@ -1,0 +1,15 @@
+{
+  "mount": {
+    "xyz": [
+      -0.208,
+      7.0119e-05,
+      0.094
+    ],
+    "rpy": [
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "note": "Final visually tuned B2 + RML63III-B mount pose. x/z are in meters; y keeps STEP axis-mapped centerline offset."
+}

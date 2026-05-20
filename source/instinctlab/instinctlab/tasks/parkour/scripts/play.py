@@ -14,6 +14,25 @@ from isaaclab.app import AppLauncher
 # local imports
 import cli_args  # isort: skip
 
+# 地形名称列表（按sub_terrains顺序）
+SUB_TERRAINS_KEYS = [
+    "perlin_rough", "perlin_rough_stand", "square_gaps", "pyramid_stairs", "pyramid_stairs_high",
+    "pyramid_stairs_inv", "pyramid_stairs_inv_high", "boxes", "mesh_boxes", "hf_pyramid_slope_inv"
+]
+
+# num_rows和num_cols用于计算terrain_idx
+TERRAIN_NUM_ROWS = 10
+TERRAIN_NUM_COLS = 20
+
+def get_terrain_name(env_id, terrain_type_list):
+    if terrain_type_list and len(terrain_type_list) > env_id and terrain_type_list[env_id] != "unknown":
+        return terrain_type_list[env_id]
+    # 正确计算 terrain_idx: (row * num_cols + col) % num_terrains
+    row = env_id // TERRAIN_NUM_COLS
+    col = env_id % TERRAIN_NUM_COLS
+    terrain_idx = (row * TERRAIN_NUM_COLS + col) % len(SUB_TERRAINS_KEYS)
+    return SUB_TERRAINS_KEYS[terrain_idx]
+
 # add argparse arguments
 parser = argparse.ArgumentParser(description="使用 Instinct-RL 播放RL智能体。")
 parser.add_argument("--video", action="store_true", default=False, help="训练时录制视频。")
@@ -38,6 +57,7 @@ parser.add_argument("--keyboard_angvel", type=float, default=1.0, help="键盘�
 parser.add_argument("--debug_ray", action="store_true", default=False, help="启用射线检测可视化。")
 parser.add_argument("--save_depth_interval", type=int, default=0, help="每N步保存一次俯视深度图，0表示禁用。")
 parser.add_argument("--save_record_rgb_interval", type=int, default=0, help="每N步保存一次camera_rgb_record的RGB和深度图，0表示禁用。")
+parser.add_argument("--save_rgb_zhengshi_interval", type=int, default=0, help="每N步保存一次rgb_camera的RGB和深度图，0表示禁用。")
 
 # append Instinct-RL cli arguments
 cli_args.add_instinct_rl_args(parser)
@@ -48,6 +68,8 @@ args_cli = parser.parse_args()
 if args_cli.video:
     args_cli.enable_cameras = True
 if args_cli.save_record_rgb_interval > 0:
+    args_cli.enable_cameras = True
+if args_cli.save_rgb_zhengshi_interval > 0:
     args_cli.enable_cameras = True
 
 print(f"[DEBUG] args_cli.video = {args_cli.video}")
@@ -149,8 +171,9 @@ def main():
     run_id = time.strftime("%Y%m%d_%H%M%S")
     save_depth_dir = None
     save_record_rgb_dir = None
+    save_rgb_zhengshi_dir = None
 
-    if args_cli.save_depth_interval > 0 or args_cli.save_record_rgb_interval > 0:
+    if args_cli.save_depth_interval > 0 or args_cli.save_record_rgb_interval > 0 or args_cli.save_rgb_zhengshi_interval > 0:
         depth_run_dir = os.path.join(log_dir, f"depth_run_{run_id}")
         os.makedirs(depth_run_dir, exist_ok=True)
         print(f"[INFO] Depth run directory: {depth_run_dir}")
@@ -166,6 +189,12 @@ def main():
         os.makedirs(save_record_rgb_dir, exist_ok=True)
         print(f"[INFO] Saving rgbd_record to: {save_record_rgb_dir}")
         print(f"[INFO] Will save every {args_cli.save_record_rgb_interval} steps")
+
+    if args_cli.save_rgb_zhengshi_interval > 0:
+        save_rgb_zhengshi_dir = os.path.join(depth_run_dir, "rgbd_zhengshi")
+        os.makedirs(save_rgb_zhengshi_dir, exist_ok=True)
+        print(f"[INFO] Saving rgb_camera to: {save_rgb_zhengshi_dir}")
+        print(f"[INFO] Will save every {args_cli.save_rgb_zhengshi_interval} steps")
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
@@ -302,6 +331,17 @@ def main():
             if args_cli.video:
                 env.unwrapped.render()
 
+            terrain_type_list = getattr(env.unwrapped, "terrain_type_list", None)
+            terrain = getattr(env.unwrapped.scene, "terrain", None)
+            if terrain is not None:
+                terrain_types = terrain.terrain_types.cpu().numpy()
+                terrain_levels = getattr(terrain, "terrain_levels", None)
+                if terrain_levels is not None:
+                    terrain_levels = terrain_levels.cpu().numpy()
+            else:
+                terrain_types = None
+                terrain_levels = None
+
             if save_depth_dir is not None and timestep % args_cli.save_depth_interval == 0:
                 try:
                     depth_data = env.unwrapped.scene["camera"].data.output["distance_to_image_plane"]
@@ -313,7 +353,6 @@ def main():
                         continue
 
                     num_envs = depth_data.shape[0]
-                    terrain_type_list = getattr(env.unwrapped, "terrain_type_list", [])
 
                     for env_id in range(num_envs):
                         depth_np = depth_data[env_id].cpu().numpy()
@@ -328,9 +367,17 @@ def main():
                         else:
                             depth_normalized = np.zeros_like(depth_np, dtype=np.uint8)
 
-                        terrain_type = terrain_type_list[env_id] if env_id < len(terrain_type_list) else "unknown"
+                        if terrain_levels is not None and terrain_types is not None:
+                            level = int(terrain_levels[env_id])
+                            col = int(terrain_types[env_id])
+                            terrain_type = f"level{level}_col{col}"
+                        else:
+                            terrain_type = f"env{env_id}"
                         env_save_dir = os.path.join(save_depth_dir, terrain_type)
                         os.makedirs(env_save_dir, exist_ok=True)
+
+                        if timestep == 0:
+                            print(f"[DEBUG] raycaster env_id={env_id}, level={level if terrain_levels is not None else -1}, col={col if terrain_types is not None else -1}, terrain={terrain_type}")
 
                         img_depth = Image.fromarray(depth_normalized)
                         img_depth.save(os.path.join(env_save_dir, f"step_{timestep:06d}_env{env_id:02d}_depth.png"))
@@ -359,34 +406,93 @@ def main():
                 try:
                     record_rgb_data = env.unwrapped.scene["camera_rgb_record"].data.output
                     if "rgb" in record_rgb_data and record_rgb_data["rgb"] is not None:
-                        record_rgb = record_rgb_data["rgb"][0].cpu().numpy()
-                        record_rgb = (record_rgb * 255).astype(np.uint8) if record_rgb.max() <= 1.0 else record_rgb.astype(np.uint8)
-                        record_rgb_bgr = cv2.cvtColor(record_rgb, cv2.COLOR_RGB2BGR)
-
+                        record_rgb = record_rgb_data["rgb"]
                         record_depth_data = record_rgb_data.get("distance_to_image_plane")
+
                         if record_depth_data is not None and len(record_depth_data) > 0:
-                            record_depth_np = record_depth_data[0].cpu().numpy()
-                            if record_depth_np.ndim == 3:
-                                record_depth_np = record_depth_np.squeeze(-1)
-                            record_depth_np = np.nan_to_num(record_depth_np, nan=0.0, posinf=100.0, neginf=0.0)
+                            num_cameras = record_rgb.shape[0]
+                            print(f"[DEBUG] camera_rgb_record rgb shape: {record_rgb.shape}, depth shape: {record_depth_data.shape}")
 
-                            terrain_type_list = getattr(env.unwrapped, "terrain_type_list", [])
-                            terrain_type = terrain_type_list[0] if len(terrain_type_list) > 0 else "unknown"
-                            env_save_dir = os.path.join(save_record_rgb_dir, terrain_type)
-                            os.makedirs(env_save_dir, exist_ok=True)
+                            for cam_id in range(num_cameras):
+                                cam_rgb = record_rgb[cam_id].cpu().numpy()
+                                cam_rgb = (cam_rgb * 255).astype(np.uint8) if cam_rgb.max() <= 1.0 else cam_rgb.astype(np.uint8)
+                                cam_rgb_bgr = cv2.cvtColor(cam_rgb, cv2.COLOR_RGB2BGR)
 
-                            fixed_min, fixed_max = 0.0, 10.0
-                            depth_clipped = np.clip(record_depth_np, fixed_min, fixed_max)
-                            depth_normalized = ((depth_clipped - fixed_min) / (fixed_max - fixed_min) * 255).astype(np.uint8)
+                                cam_depth = record_depth_data[cam_id].cpu().numpy()
+                                if cam_depth.ndim == 3:
+                                    cam_depth = cam_depth.squeeze(-1)
+                                cam_depth = np.nan_to_num(cam_depth, nan=0.0, posinf=100.0, neginf=0.0)
 
-                            depth_filename = os.path.join(env_save_dir, f"record_t{timestep}_depth.png")
-                            cv2.imwrite(depth_filename, depth_normalized)
+                                # 使用与 raycaster 相同的地形逻辑
+                                if terrain_levels is not None and terrain_types is not None:
+                                    level = int(terrain_levels[cam_id])
+                                    col = int(terrain_types[cam_id])
+                                    terrain_type = f"level{level}_col{col}"
+                                else:
+                                    terrain_type = f"env{cam_id}"
+                                env_save_dir = os.path.join(save_record_rgb_dir, terrain_type)
+                                os.makedirs(env_save_dir, exist_ok=True)
 
-                            rgb_filename = os.path.join(env_save_dir, f"record_t{timestep}_rgb.png")
-                            cv2.imwrite(rgb_filename, record_rgb_bgr)
+                                if timestep == 0:
+                                    print(f"[DEBUG] rgbd_record cam_id={cam_id}, level={level if terrain_levels is not None else -1}, col={col if terrain_types is not None else -1}, terrain={terrain_type}")
+
+                                fixed_min, fixed_max = 0.0, 10.0
+                                depth_clipped = np.clip(cam_depth, fixed_min, fixed_max)
+                                depth_normalized = ((depth_clipped - fixed_min) / (fixed_max - fixed_min) * 255).astype(np.uint8)
+
+                                depth_filename = os.path.join(env_save_dir, f"record_t{timestep}_cam{cam_id}_depth.png")
+                                cv2.imwrite(depth_filename, depth_normalized)
+
+                                rgb_filename = os.path.join(env_save_dir, f"record_t{timestep}_cam{cam_id}_rgb.png")
+                                cv2.imwrite(rgb_filename, cam_rgb_bgr)
                 except Exception as e:
                     if timestep % 200 == 0:
                         print(f"[DEBUG] Failed to save camera_rgb_record: {e}")
+
+            if save_rgb_zhengshi_dir is not None and timestep % args_cli.save_rgb_zhengshi_interval == 0:
+                try:
+                    rgb_zhengshi_data = env.unwrapped.scene["rgb_camera"].data.output
+                    if "rgb" in rgb_zhengshi_data and rgb_zhengshi_data["rgb"] is not None:
+                        rgb_zhengshi = rgb_zhengshi_data["rgb"]
+                        depth_zhengshi_data = rgb_zhengshi_data.get("distance_to_image_plane")
+
+                        if depth_zhengshi_data is not None and len(depth_zhengshi_data) > 0:
+                            num_cameras = rgb_zhengshi.shape[0]
+
+                            for cam_id in range(num_cameras):
+                                cam_rgb = rgb_zhengshi[cam_id].cpu().numpy()
+                                cam_rgb = (cam_rgb * 255).astype(np.uint8) if cam_rgb.max() <= 1.0 else cam_rgb.astype(np.uint8)
+                                cam_rgb_bgr = cv2.cvtColor(cam_rgb, cv2.COLOR_RGB2BGR)
+
+                                cam_depth = depth_zhengshi_data[cam_id].cpu().numpy()
+                                if cam_depth.ndim == 3:
+                                    cam_depth = cam_depth.squeeze(-1)
+                                cam_depth = np.nan_to_num(cam_depth, nan=0.0, posinf=100.0, neginf=0.0)
+
+                                if terrain_levels is not None and terrain_types is not None:
+                                    level = int(terrain_levels[cam_id])
+                                    col = int(terrain_types[cam_id])
+                                    terrain_type = f"level{level}_col{col}"
+                                else:
+                                    terrain_type = f"env{cam_id}"
+                                env_save_dir = os.path.join(save_rgb_zhengshi_dir, terrain_type)
+                                os.makedirs(env_save_dir, exist_ok=True)
+
+                                if timestep == 0:
+                                    print(f"[DEBUG] rgb_camera cam_id={cam_id}, level={level if terrain_levels is not None else -1}, col={col if terrain_types is not None else -1}, terrain={terrain_type}")
+
+                                fixed_min, fixed_max = 0.0, 10.0
+                                depth_clipped = np.clip(cam_depth, fixed_min, fixed_max)
+                                depth_normalized = ((depth_clipped - fixed_min) / (fixed_max - fixed_min) * 255).astype(np.uint8)
+
+                                depth_filename = os.path.join(env_save_dir, f"zhengshi_t{timestep}_cam{cam_id}_depth.png")
+                                cv2.imwrite(depth_filename, depth_normalized)
+
+                                rgb_filename = os.path.join(env_save_dir, f"zhengshi_t{timestep}_cam{cam_id}_rgb.png")
+                                cv2.imwrite(rgb_filename, cam_rgb_bgr)
+                except Exception as e:
+                    if timestep % 200 == 0:
+                        print(f"[DEBUG] Failed to save rgb_camera: {e}")
 
             timestep += 1
 

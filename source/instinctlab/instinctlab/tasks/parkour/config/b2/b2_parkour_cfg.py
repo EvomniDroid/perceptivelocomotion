@@ -1,0 +1,401 @@
+import copy
+import os
+import math
+
+from isaaclab.envs import ViewerCfg, ManagerBasedRLEnvCfg
+from isaaclab.utils import configclass
+from isaaclab.managers import ObservationGroupCfg as ObsGroup
+from isaaclab.managers import ObservationTermCfg as ObsTerm
+from isaaclab.managers import RewardTermCfg as RewTerm
+from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import TerminationTermCfg as DoneTerm
+from instinctlab.managers import MultiRewardCfg
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
+from isaaclab.sensors.ray_caster.patterns import PinholeCameraPatternCfg
+from isaaclab.sensors.camera import CameraCfg, TiledCameraCfg
+from isaaclab.sim.spawners.sensors import PinholeCameraCfg
+import isaaclab.sim as sim_utils
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
+from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
+
+import instinctlab.tasks.parkour.mdp as mdp
+import instinctlab.envs.mdp as instinct_mdp
+
+from instinctlab.assets.unitree_b2 import (
+    B2_12DOF_LINKS,
+    B2_CFG,
+    b2_12dof_delayed_actuators,
+)
+from instinctlab.sensors import Grid3dPointsGeneratorCfg, VolumePointsCfg, NoisyGroupedRayCasterCameraCfg
+from instinctlab.terrains import (
+    GreedyconcatEdgeCylinderCfg,
+    TerrainImporterCfg,
+    TerrainImporter,
+)
+from instinctlab.terrains.terrain_generator_cfg import FiledTerrainGeneratorCfg
+from instinctlab.terrains.terrain_generator import FiledTerrainGenerator
+from instinctlab.terrains.shared_terrain_cfg import TRAINING_SUB_TERRAINS
+
+__file_dir__ = os.path.dirname(os.path.realpath(__file__))
+
+ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
+    class_type=FiledTerrainGenerator,
+    seed=0,
+    size=(8.0, 8.0),
+    border_width=3,
+    num_rows=10,
+    num_cols=20,
+    horizontal_scale=0.05,
+    vertical_scale=0.005,
+    slope_threshold=1.0,
+    use_cache=False,
+    curriculum=True,
+    sub_terrains=TRAINING_SUB_TERRAINS,
+)
+
+
+@configclass
+class B2SceneCfg(InteractiveSceneCfg):
+    num_envs: int = 4096
+    env_spacing: float = 2.5
+
+    terrain = TerrainImporterCfg(
+        class_type=TerrainImporter,
+        prim_path="/World/ground",
+        terrain_type="hacked_generator",
+        terrain_generator=ROUGH_TERRAINS_CFG,
+        max_init_terrain_level=5,
+        collision_group=-1,
+        physics_material=sim_utils.RigidBodyMaterialCfg(
+            friction_combine_mode="multiply",
+            restitution_combine_mode="multiply",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+        ),
+        debug_vis=False,
+    )
+
+    robot = B2_CFG
+
+    left_height_scanner = RayCasterCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/FL_foot",
+        offset=RayCasterCfg.OffsetCfg(pos=(0.04, 0.0, 0.1)),
+        ray_alignment="yaw",
+        pattern_cfg=patterns.GridPatternCfg(resolution=0.12, size=[0.12, 0.0]),
+        debug_vis=False,
+        mesh_prim_paths=["/World/ground"],
+        update_period=0.02,
+    )
+
+    right_height_scanner = RayCasterCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/FR_foot",
+        offset=RayCasterCfg.OffsetCfg(pos=(0.04, 0.0, 0.1)),
+        ray_alignment="yaw",
+        pattern_cfg=patterns.GridPatternCfg(resolution=0.12, size=[0.12, 0.0]),
+        debug_vis=False,
+        mesh_prim_paths=["/World/ground"],
+        update_period=0.02,
+    )
+
+    contact_forces = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/.*",
+        history_length=3,
+        track_air_time=True
+    )
+
+    camera = NoisyGroupedRayCasterCameraCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/base_link",
+        mesh_prim_paths=[
+            "/World/ground",
+        ],
+        ray_alignment="yaw",
+        pattern_cfg=PinholeCameraPatternCfg(
+            focal_length=1.0,
+            horizontal_aperture=2 * math.tan(math.radians(89.51) / 2),
+            vertical_aperture=2 * math.tan(math.radians(58.29) / 2),
+            width=64,
+            height=36,
+        ),
+        debug_vis=False,
+        data_types=["distance_to_image_plane"],
+        offset=NoisyGroupedRayCasterCameraCfg.OffsetCfg(
+            pos=(0.0, 0.0, 0.3),
+            rot=(0.9135367613482678, 0.004363309284746571, 0.4067366430758002, 0.0),
+            convention="world",
+        ),
+        min_distance=0.1,
+    )
+
+    leg_volume_points = VolumePointsCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/.*_foot",
+        points_generator=Grid3dPointsGeneratorCfg(
+            x_min=-0.025,
+            x_max=0.12,
+            x_num=10,
+            y_min=-0.03,
+            y_max=0.03,
+            y_num=5,
+            z_min=-0.04,
+            z_max=0.0,
+            z_num=2,
+        ),
+        debug_vis=False,
+    )
+
+
+@configclass
+class B2RewardsCfg:
+    track_lin_vel_xy_exp = RewTerm(
+        func=mdp.track_lin_vel_xy_exp,
+        weight=2.0,
+        params={"command_name": "base_velocity", "std": 0.5},
+    )
+    track_ang_vel_z_exp = RewTerm(
+        func=mdp.track_ang_vel_z_exp,
+        weight=2.0,
+        params={"command_name": "base_velocity", "std": 0.5},
+    )
+    heading_error = RewTerm(
+        func=mdp.heading_error,
+        weight=-1.0,
+        params={"command_name": "base_velocity"},
+    )
+    dont_wait = RewTerm(
+        func=mdp.dont_wait,
+        weight=-0.5,
+        params={"command_name": "base_velocity"},
+    )
+    is_alive = RewTerm(func=mdp.is_alive, weight=3.0)
+    stand_still = RewTerm(
+        func=mdp.stand_still,
+        weight=-0.3,
+        params={"command_name": "base_velocity", "offset": 4.0},
+    )
+    volume_points_penetration = RewTerm(
+        func=mdp.volume_points_penetration,
+        weight=-4.0,
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                name="leg_volume_points",
+                body_names=[".*_foot"],
+            ),
+        },
+    )
+    feet_air_time = RewTerm(
+        func=mdp.feet_air_time,
+        weight=0.5,
+        params={
+            "command_name": "base_velocity",
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "vel_threshold": 0.15,
+        },
+    )
+    feet_slide = RewTerm(
+        func=mdp.contact_slide,
+        weight=-0.4,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
+            "threshold": 1.0,
+        },
+    )
+    joint_deviation_hip = RewTerm(
+        func=mdp.joint_deviation_square,
+        weight=-0.5,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_joint"])
+        },
+    )
+    ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
+    dof_torques_l2 = RewTerm(
+        func=mdp.joint_torques_l2,
+        weight=-1.5e-07,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
+            )
+        },
+    )
+    dof_acc_l2 = RewTerm(
+        func=mdp.joint_acc_l2,
+        weight=-1.25e-07,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*"])},
+    )
+    dof_vel_l2 = RewTerm(
+        func=mdp.joint_vel_l2,
+        weight=-0.0001,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*"])},
+    )
+    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.005)
+    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-0.2)
+
+
+@configclass
+class B2PolicyObsCfg(ObsGroup):
+    joint_pos = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
+    joint_vel = ObsTerm(func=mdp.joint_vel_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
+    base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.01, n_max=0.01))
+    base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.01, n_max=0.01))
+    projected_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.01, n_max=0.01))
+    velocity_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "base_velocity"})
+    actions = ObsTerm(func=instinct_mdp.last_action)
+    depth_image = ObsTerm(
+        func=mdp.delayed_visualizable_image,
+        params={
+            "data_type": "distance_to_image_plane_noised_history",
+            "sensor_cfg": SceneEntityCfg("camera"),
+            "history_skip_frames": 5,
+            "num_output_frames": 8,
+            "delayed_frame_ranges": (0, 1),
+            "debug_vis": False,
+        },
+        noise=None,
+    )
+
+    def __post_init__(self):
+        self.enable_corruption = True
+        self.concatenate_terms = False
+
+
+@configclass
+class B2CriticObsCfg(ObsGroup):
+    joint_pos = ObsTerm(func=mdp.joint_pos_rel)
+    joint_vel = ObsTerm(func=mdp.joint_vel_rel)
+    base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
+    base_ang_vel = ObsTerm(func=mdp.base_ang_vel)
+    projected_gravity = ObsTerm(func=mdp.projected_gravity)
+    velocity_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "base_velocity"})
+    actions = ObsTerm(func=instinct_mdp.last_action)
+    depth_image = ObsTerm(
+        func=mdp.delayed_visualizable_image,
+        params={
+            "data_type": "distance_to_image_plane_noised_history",
+            "sensor_cfg": SceneEntityCfg("camera"),
+            "history_skip_frames": 5,
+            "num_output_frames": 8,
+            "delayed_frame_ranges": (0, 1),
+            "debug_vis": False,
+        },
+        noise=None,
+    )
+
+    def __post_init__(self):
+        self.enable_corruption = False
+        self.concatenate_terms = False
+
+
+@configclass
+class B2ObservationsCfg:
+    policy: B2PolicyObsCfg = B2PolicyObsCfg()
+    critic: B2CriticObsCfg = B2CriticObsCfg()
+
+
+@configclass
+class B2CommandsCfg:
+    base_velocity = mdp.PoseVelocityCommandCfg(
+        asset_name="robot",
+        resampling_time_range=(8.0, 12.0),
+        debug_vis=False,
+        velocity_control_stiffness=2.0,
+        heading_control_stiffness=2.0,
+        rel_standing_envs=0.05,
+        ranges=mdp.PoseVelocityCommandCfg.Ranges(
+            lin_vel_x=(0.0, 0.0),
+            lin_vel_y=(0.0, 0.0),
+            ang_vel_z=(-1.0, 1.0)
+        ),
+        random_velocity_terrain=["perlin_rough_stand"],
+        velocity_ranges={
+            "perlin_rough": {"lin_vel_x": (0.45, 1.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
+            "perlin_rough_stand": {"lin_vel_x": (0.0, 0.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (0.0, 0.0)},
+            "square_gaps": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
+            "pyramid_stairs": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
+            "pyramid_stairs_high": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
+            "pyramid_stairs_inv": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
+            "pyramid_stairs_inv_high": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
+            "boxes": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
+            "mesh_boxes": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
+            "hf_pyramid_slope_inv": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
+        },
+    )
+
+
+@configclass
+class B2TerminationsCfg:
+    time_out = DoneTerm(func=mdp.time_out, time_out=True)
+    terrain_out_bound = DoneTerm(func=mdp.terrain_out_of_bounds, time_out=True, params={"distance_buffer": 2.0})
+    bad_orientation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 1.0})
+    root_height = DoneTerm(func=mdp.root_height_below_env_origin_minimum, params={"minimum_height": 0.5})
+
+
+@configclass
+class B2RewardsCfgFinal(MultiRewardCfg):
+    rewards: B2RewardsCfg = B2RewardsCfg()
+
+
+@configclass
+class B2ActionsCfg:
+    joint_pos = instinct_mdp.JointPositionActionCfg(
+        asset_name="robot", joint_names=[".*"], scale=0.5, use_default_offset=True
+    )
+
+
+@configclass
+class B2MonitorsCfg:
+    pass
+
+
+@configclass
+class B2ParkourEnvCfg(ManagerBasedRLEnvCfg):
+    scene: B2SceneCfg = B2SceneCfg()
+    observations: B2ObservationsCfg = B2ObservationsCfg()
+    actions: B2ActionsCfg = B2ActionsCfg()
+    commands: B2CommandsCfg = B2CommandsCfg()
+    rewards: B2RewardsCfgFinal = B2RewardsCfgFinal()
+    terminations: B2TerminationsCfg = B2TerminationsCfg()
+    monitors: B2MonitorsCfg = B2MonitorsCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.decimation = 4
+        self.episode_length_s = 20.0
+        self.sim.dt = 0.005
+        self.sim.render_interval = self.decimation
+        self.sim.physics_material = self.scene.terrain.physics_material
+        self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
+        self.sim.physx.gpu_collision_stack_size = 2**29
+
+        if self.scene.contact_forces is not None:
+            self.scene.contact_forces.update_period = self.sim.dt
+
+        self.scene.robot = B2_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        self.scene.robot.actuators = b2_12dof_delayed_actuators
+
+
+ROUGH_TERRAINS_CFG_PLAY = copy.deepcopy(ROUGH_TERRAINS_CFG)
+for sub_terrain_name, sub_terrain_cfg in ROUGH_TERRAINS_CFG_PLAY.sub_terrains.items():
+    sub_terrain_cfg.wall_prob = [0.0, 0.0, 0.0, 0.0]
+
+
+@configclass
+class B2ParkourEnvCfg_PLAY(B2ParkourEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.terrain.terrain_generator = ROUGH_TERRAINS_CFG_PLAY
+        self.scene.num_envs = 10
+        self.viewer = ViewerCfg(
+            eye=[4.0, 0.75, 1.5],
+            lookat=[0.0, 0.75, 0.0],
+            origin_type="asset_root",
+            asset_name="robot",
+        )
+        self.scene.env_spacing = 2.5
+        self.episode_length_s = 10
+        self.terminations.base_height = None
+        if self.scene.terrain.terrain_generator is not None:
+            self.scene.terrain.terrain_generator.num_rows = 4
+            self.scene.terrain.terrain_generator.num_cols = 10
+
+        self.commands.base_velocity.debug_vis = True

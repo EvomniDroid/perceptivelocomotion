@@ -1,0 +1,15 @@
+{
+  "mount": {
+    "xyz": [
+      -0.208,
+      0.0,
+      0.094
+    ],
+    "rpy": [
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "note": "Final visually tuned B2 + RML63III-B mount pose with y centered at 0."
+}

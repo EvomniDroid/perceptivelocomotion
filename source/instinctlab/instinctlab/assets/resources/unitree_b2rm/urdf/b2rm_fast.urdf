@@ -1,0 +1,1134 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="b2rm">
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0.000458 0.005261 0.000665" rpy="0 0 0" />
+      <mass value="35.86" />
+      <inertia ixx="0.27466" ixy="-0.000622" ixz="0.00315" iyy="1.0618" iyz="-0.00139" izz="1.1825" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/b2/base_link.dae" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size="0.5 0.28 0.15" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="lidar_link">
+    <inertial>
+      <origin xyz="0.34218 0 0.17851" rpy="0 0 0" />
+      <mass value="4.19E-15" />
+      <inertia ixx="1.68E-27" ixy="-3.2E-45" ixz="7.68E-44" iyy="1.68E-27" iyz="-9.26E-47" izz="1.68E-27" />
+    </inertial>
+  </link>
+  <joint name="joint_lidar" type="fixed">
+    <origin xyz="0.34218 0 0.17851" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="lidar_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="f_dc_link">
+    <inertial>
+      <origin xyz="3.47E-18 0 5.55E-17" rpy="0 0 0" />
+      <mass value="4.19E-15" />
+      <inertia ixx="1.68E-27" ixy="-9.81E-45" ixz="-2.54E-44" iyy="1.68E-27" iyz="0" izz="1.68E-27" />
+    </inertial>
+  </link>
+  <joint name="joint_f_dc" type="fixed">
+    <origin xyz="0.41251 0.024997 0.04765" rpy="-2.3562 0 -1.5708" />
+    <parent link="base_link" />
+    <child link="f_dc_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="r_dc_link">
+    <inertial>
+      <origin xyz="-7.46E-16 -3.33E-16 -1.11E-15" rpy="0 0 0" />
+      <mass value="4.19E-15" />
+      <inertia ixx="1.68E-27" ixy="-4.31E-44" ixz="2.48E-45" iyy="1.68E-27" iyz="0" izz="1.68E-27" />
+    </inertial>
+  </link>
+  <joint name="joint_r_dc" type="fixed">
+    <origin xyz="-0.4081 -0.025 0.024861" rpy="-2.3557 0 1.5708" />
+    <parent link="base_link" />
+    <child link="r_dc_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="imu_link">
+    <inertial>
+      <origin xyz="-2.02E-17 1.73E-17 -1.39E-17" rpy="0 0 0" />
+      <mass value="4.19E-15" />
+      <inertia ixx="1.68E-27" ixy="1.84E-44" ixz="-7.35E-44" iyy="1.68E-27" iyz="-3.67E-44" izz="1.68E-27" />
+    </inertial>
+  </link>
+  <joint name="joint_imu" type="fixed">
+    <origin xyz="0 -0.02341 0.04927" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="imu_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="head_Link">
+    <inertial>
+      <origin xyz="0.33989 -0.000168 0.12029" rpy="0 0 0" />
+      <mass value="3.6885" />
+      <inertia ixx="0.026455" ixy="3.15E-05" ixz="0.00166" iyy="0.029221" iyz="-3.27E-05" izz="0.010918" />
+    </inertial>
+  </link>
+  <joint name="joint_head" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="head_Link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="tail_link">
+    <inertial>
+      <origin xyz="-0.37448 0.000488 0.006495" rpy="0 0 0" />
+      <mass value="0.795" />
+      <inertia ixx="0.0028118" ixy="1.95E-05" ixz="-7.87E-06" iyy="0.0047506" iyz="-1.57E-05" izz="0.0029154" />
+    </inertial>
+  </link>
+  <joint name="joint_tail" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="tail_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="FL_hip">
+    <inertial>
+      <origin xyz="-0.003841 -0.009068 0" rpy="0 0 0" />
+      <mass value="2.673" />
+      <inertia ixx="0.0033188" ixy="7.16E-05" ixz="-3.77E-07" iyy="0.0048743" iyz="4E-09" izz="0.0037087" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/b2/FL_hip.dae" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0.095 0" rpy="1.5707963267948966 0 0" />
+      <geometry>
+        <cylinder length="0.04" radius="0.055" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="FL_hip_joint" type="revolute">
+    <origin xyz="0.3285 0.072 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="FL_hip" />
+    <axis xyz="1 0 0" />
+    <limit lower="-0.87" upper="0.87" effort="200" velocity="23" />
+  </joint>
+  <link name="FL_hip_rotor">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0" />
+      <mass value="0.2734" />
+      <inertia ixx="0.000144463" ixy="0.0" ixz="0.0" iyy="0.000144463" iyz="0.0" izz="0.000263053" />
+    </inertial>
+  </link>
+  <joint name="FL_hip_rotor_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0.20205 0.072 0" />
+    <parent link="base_link" />
+    <child link="FL_hip_rotor" />
+  </joint>
+  <link name="FL_thigh">
+    <inertial>
+      <origin xyz="-0.006279 -0.032049 -0.057835" rpy="0 0 0" />
+      <mass value="4.536" />
+      <inertia ixx="0.062299" ixy="0.00087781" ixz="-0.0036475" iyy="0.061399" iyz="0.0083537" izz="0.0081997" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/b2/FL_thigh.dae" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.02 0 -0.19" rpy="0 1.57 0" />
+      <geometry>
+        <box size="0.24 0.032 0.044" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="FL_thigh_joint" type="revolute">
+    <origin xyz="0 0.11973 0" rpy="0 0 0" />
+    <parent link="FL_hip" />
+    <child link="FL_thigh" />
+    <axis xyz="0 1 0" />
+    <limit lower="-0.94" upper="4.69" effort="200" velocity="23" />
+  </joint>
+  <link name="FL_thigh_rotor">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0" />
+      <mass value="0.2734" />
+      <inertia ixx="0.000144463" ixy="0.0" ixz="0.0" iyy="0.000144463" iyz="0.0" izz="0.000263053" />
+    </inertial>
+  </link>
+  <joint name="FL_thigh_rotor_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 -0.00798 0" />
+    <parent link="FL_hip" />
+    <child link="FL_thigh_rotor" />
+  </joint>
+  <link name="FL_calf">
+    <inertial>
+      <origin xyz="0.012422 0 -0.12499" rpy="0 0 0" />
+      <mass value="0.404" />
+      <inertia ixx="0.01143" ixy="0" ixz="0.000643" iyy="0.011534" iyz="0" izz="0.000331" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/b2/FL_calf.dae" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.03 0 -0.19" rpy="0 1.57 0" />
+      <geometry>
+        <box size="0.22 0.026 0.032" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="FL_calf_joint" type="revolute">
+    <origin xyz="0 -8.6984E-05 -0.35" rpy="0 0 0" />
+    <parent link="FL_thigh" />
+    <child link="FL_calf" />
+    <axis xyz="0 1 0" />
+    <limit lower="-2.82" upper="-0.43" effort="320" velocity="14" />
+  </joint>
+  <link name="FL_calf_rotor">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0" />
+      <mass value="0.2734" />
+      <inertia ixx="0.000144463" ixy="0.0" ixz="0.0" iyy="0.000144463" iyz="0.0" izz="0.000263053" />
+    </inertial>
+  </link>
+  <joint name="FL_calf_rotor_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 -0.05788 0" />
+    <parent link="FL_thigh" />
+    <child link="FL_calf_rotor" />
+  </joint>
+  <link name="FL_foot">
+    <inertial>
+      <origin xyz="-0.006511 0 -0.010144" rpy="0 0 0" />
+      <mass value="0.126" />
+      <inertia ixx="3.8E-05" ixy="0" ixz="1.1E-05" iyy="4.1E-05" iyz="0" izz="4.2E-05" />
+    </inertial>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.57 0 0" />
+      <geometry>
+        <sphere radius="0.032" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="FL_foot_joint" type="fixed" dont_collapse="true">
+    <origin xyz="0 0 -0.35" rpy="0 0 0" />
+    <parent link="FL_calf" />
+    <child link="FL_foot" />
+  </joint>
+  <link name="FR_hip">
+    <inertial>
+      <origin xyz="-0.009305 0.010228 0.000264" rpy="0 0 0" />
+      <mass value="2.256" />
+      <inertia ixx="0.0026431" ixy="-0.00019234" ixz="-6.76E-06" iyy="0.0046728" iyz="7.16E-06" izz="0.0034208" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/b2/FR_hip.dae" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 -0.095 0" rpy="1.5707963267948966 0 0" />
+      <geometry>
+        <cylinder length="0.04" radius="0.055" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="FR_hip_joint" type="revolute">
+    <origin xyz="0.3285 -0.072 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="FR_hip" />
+    <axis xyz="1 0 0" />
+    <limit lower="-0.87" upper="0.87" effort="200" velocity="23" />
+  </joint>
+  <link name="FR_hip_rotor">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0" />
+      <mass value="0.2734" />
+      <inertia ixx="0.000144463" ixy="0.0" ixz="0.0" iyy="0.000144463" iyz="0.0" izz="0.000263053" />
+    </inertial>
+  </link>
+  <joint name="FR_hip_rotor_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0.20205 -0.072 0" />
+    <parent link="base_link" />
+    <child link="FR_hip_rotor" />
+  </joint>
+  <link name="FR_thigh">
+    <inertial>
+      <origin xyz="-0.006279 0.032049 -0.057835" rpy="0 0 0" />
+      <mass value="4.536" />
+      <inertia ixx="0.06229908" ixy="-0.000877808" ixz="-0.003647464" iyy="0.06139927" iyz="-0.008353671" izz="0.008199745" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/b2/FR_thigh.dae" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.02 0 -0.19" rpy="0 1.57 0" />
+      <geometry>
+        <box size="0.24 0.032 0.044" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="FR_thigh_joint" type="revolute">
+    <origin xyz="0 -0.11973 0" rpy="0 0 0" />
+    <parent link="FR_hip" />
+    <child link="FR_thigh" />
+    <axis xyz="0 1 0" />
+    <limit lower="-0.94" upper="4.69" effort="200" velocity="23" />
+  </joint>
+  <link name="FR_thigh_rotor">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0" />
+      <mass value="0.2734" />
+      <inertia ixx="0.000144463" ixy="0.0" ixz="0.0" iyy="0.000144463" iyz="0.0" izz="0.000263053" />
+    </inertial>
+  </link>
+  <joint name="FR_thigh_rotor_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0.00798 0" />
+    <parent link="FR_hip" />
+    <child link="FR_thigh_rotor" />
+  </joint>
+  <link name="FR_calf">
+    <inertial>
+      <origin xyz="0.012422 0 -0.12499" rpy="0 0 0" />
+      <mass value="0.404" />
+      <inertia ixx="0.01143" ixy="0" ixz="0.000643" iyy="0.011534" iyz="0" izz="0.000331" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/b2/FR_calf.dae" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.03 0 -0.19" rpy="0 1.57 0" />
+      <geometry>
+        <box size="0.22 0.026 0.032" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="FR_calf_joint" type="revolute">
+    <origin xyz="0 8.6986E-05 -0.35" rpy="0 0 0" />
+    <parent link="FR_thigh" />
+    <child link="FR_calf" />
+    <axis xyz="0 1 0" />
+    <limit lower="-2.82" upper="-0.43" effort="320" velocity="14" />
+  </joint>
+  <link name="FR_calf_rotor">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0" />
+      <mass value="0.2734" />
+      <inertia ixx="0.000144463" ixy="0.0" ixz="0.0" iyy="0.000144463" iyz="0.0" izz="0.000263053" />
+    </inertial>
+  </link>
+  <joint name="FR_calf_rotor_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0.05788 0" />
+    <parent link="FR_thigh" />
+    <child link="FR_calf_rotor" />
+  </joint>
+  <link name="FR_foot">
+    <inertial>
+      <origin xyz="-0.006511 0 -0.010144" rpy="0 0 0" />
+      <mass value="0.126" />
+      <inertia ixx="3.8E-05" ixy="0" ixz="1.1E-05" iyy="4.1E-05" iyz="0" izz="4.2E-05" />
+    </inertial>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.57 0 0" />
+      <geometry>
+        <sphere radius="0.032" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="FR_foot_joint" type="fixed" dont_collapse="true">
+    <origin xyz="0 0 -0.35" rpy="0 0 0" />
+    <parent link="FR_calf" />
+    <child link="FR_foot" />
+  </joint>
+  <link name="RL_hip">
+    <inertial>
+      <origin xyz="0.009305 -0.010228 0.000264" rpy="0 0 0" />
+      <mass value="2.256" />
+      <inertia ixx="0.0026431" ixy="-0.00019234" ixz="6.76E-06" iyy="0.0046728" iyz="-7.16E-06" izz="0.0034208" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/b2/RL_hip.dae" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0.095 0" rpy="1.5707963267948966 0 0" />
+      <geometry>
+        <cylinder length="0.04" radius="0.055" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="RL_hip_joint" type="revolute">
+    <origin xyz="-0.3285 0.072 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="RL_hip" />
+    <axis xyz="1 0 0" />
+    <limit lower="-0.87" upper="0.87" effort="200" velocity="23" />
+  </joint>
+  <link name="RL_hip_rotor">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0" />
+      <mass value="0.2734" />
+      <inertia ixx="0.000144463" ixy="0.0" ixz="0.0" iyy="0.000144463" iyz="0.0" izz="0.000263053" />
+    </inertial>
+  </link>
+  <joint name="RL_hip_rotor_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="-0.20205 0.072 0" />
+    <parent link="base_link" />
+    <child link="RL_hip_rotor" />
+  </joint>
+  <link name="RL_thigh">
+    <inertial>
+      <origin xyz="-0.006279 -0.032049 -0.057835" rpy="0 0 0" />
+      <mass value="4.536" />
+      <inertia ixx="0.06229908" ixy="0.000877808" ixz="-0.003647464" iyy="0.06139927" iyz="0.008353671" izz="0.008199745" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/b2/RL_thigh.dae" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.02 0 -0.19" rpy="0 1.57 0" />
+      <geometry>
+        <box size="0.24 0.032 0.044" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="RL_thigh_joint" type="revolute">
+    <origin xyz="0 0.11973 0" rpy="0 0 0" />
+    <parent link="RL_hip" />
+    <child link="RL_thigh" />
+    <axis xyz="0 1 0" />
+    <limit lower="-0.94" upper="4.69" effort="200" velocity="23" />
+  </joint>
+  <link name="RL_thigh_rotor">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0" />
+      <mass value="0.2734" />
+      <inertia ixx="0.000144463" ixy="0.0" ixz="0.0" iyy="0.000144463" iyz="0.0" izz="0.000263053" />
+    </inertial>
+  </link>
+  <joint name="RL_thigh_rotor_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 -0.00798 0" />
+    <parent link="RL_hip" />
+    <child link="RL_thigh_rotor" />
+  </joint>
+  <link name="RL_calf">
+    <inertial>
+      <origin xyz="0.012422 0 -0.12499" rpy="0 0 0" />
+      <mass value="0.404" />
+      <inertia ixx="0.01143" ixy="0" ixz="0.000643" iyy="0.011534" iyz="0" izz="0.000331" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/b2/RL_calf.dae" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.03 0 -0.19" rpy="0 1.57 0" />
+      <geometry>
+        <box size="0.22 0.026 0.032" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="RL_calf_joint" type="revolute">
+    <origin xyz="0 -8.6984E-05 -0.35" rpy="0 0 0" />
+    <parent link="RL_thigh" />
+    <child link="RL_calf" />
+    <axis xyz="0 1 0" />
+    <limit lower="-2.82" upper="-0.43" effort="320" velocity="14" />
+  </joint>
+  <link name="RL_calf_rotor">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0" />
+      <mass value="0.2734" />
+      <inertia ixx="0.000144463" ixy="0.0" ixz="0.0" iyy="0.000144463" iyz="0.0" izz="0.000263053" />
+    </inertial>
+  </link>
+  <joint name="RL_calf_rotor_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 -0.05788 0" />
+    <parent link="RL_thigh" />
+    <child link="RL_calf_rotor" />
+  </joint>
+  <link name="RL_foot">
+    <inertial>
+      <origin xyz="-0.006511 0 -0.010144" rpy="0 0 0" />
+      <mass value="0.126" />
+      <inertia ixx="3.8E-05" ixy="0" ixz="1.1E-05" iyy="4.1E-05" iyz="0" izz="4.2E-05" />
+    </inertial>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.57 0 0" />
+      <geometry>
+        <sphere radius="0.032" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="RL_foot_joint" type="fixed" dont_collapse="true">
+    <origin xyz="0 0 -0.35" rpy="0 0 0" />
+    <parent link="RL_calf" />
+    <child link="RL_foot" />
+  </joint>
+  <link name="RR_hip">
+    <inertial>
+      <origin xyz="0.003841 0.009068 0" rpy="0 0 0" />
+      <mass value="2.673" />
+      <inertia ixx="0.0033188" ixy="7.16E-05" ixz="3.77E-07" iyy="0.0048743" iyz="-4E-09" izz="0.0037087" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/b2/RR_hip.dae" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 -0.095 0" rpy="1.5707963267948966 0 0" />
+      <geometry>
+        <cylinder length="0.04" radius="0.055" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="RR_hip_joint" type="revolute">
+    <origin xyz="-0.3285 -0.072 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="RR_hip" />
+    <axis xyz="1 0 0" />
+    <limit lower="-0.87" upper="0.87" effort="200" velocity="23" />
+  </joint>
+  <link name="RR_hip_rotor">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0" />
+      <mass value="0.2734" />
+      <inertia ixx="0.000144463" ixy="0.0" ixz="0.0" iyy="0.000144463" iyz="0.0" izz="0.000263053" />
+    </inertial>
+  </link>
+  <joint name="RR_hip_rotor_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="-0.20205 -0.072 0" />
+    <parent link="base_link" />
+    <child link="RR_hip_rotor" />
+  </joint>
+  <link name="RR_thigh">
+    <inertial>
+      <origin xyz="-0.006279 0.032049 -0.057835" rpy="0 0 0" />
+      <mass value="4.536" />
+      <inertia ixx="0.062299" ixy="-0.00087781" ixz="-0.0036475" iyy="0.061399" iyz="-0.0083537" izz="0.0081997" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/b2/RR_thigh.dae" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.02 0 -0.19" rpy="0 1.57 0" />
+      <geometry>
+        <box size="0.24 0.032 0.044" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="RR_thigh_joint" type="revolute">
+    <origin xyz="0 -0.11973 0" rpy="0 0 0" />
+    <parent link="RR_hip" />
+    <child link="RR_thigh" />
+    <axis xyz="0 1 0" />
+    <limit lower="-0.94" upper="4.69" effort="200" velocity="23" />
+  </joint>
+  <link name="RR_thigh_rotor">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0" />
+      <mass value="0.2734" />
+      <inertia ixx="0.000144463" ixy="0.0" ixz="0.0" iyy="0.000144463" iyz="0.0" izz="0.000263053" />
+    </inertial>
+  </link>
+  <joint name="RR_thigh_rotor_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0.00798 0" />
+    <parent link="RR_hip" />
+    <child link="RR_thigh_rotor" />
+  </joint>
+  <link name="RR_calf">
+    <inertial>
+      <origin xyz="0.012422 0 -0.12499" rpy="0 0 0" />
+      <mass value="0.404" />
+      <inertia ixx="0.01143" ixy="0" ixz="0.000643" iyy="0.011534" iyz="0" izz="0.000331" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/b2/RR_calf.dae" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.03 0 -0.19" rpy="0 1.57 0" />
+      <geometry>
+        <box size="0.22 0.026 0.032" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="RR_calf_joint" type="revolute">
+    <origin xyz="0 8.6986E-05 -0.35" rpy="0 0 0" />
+    <parent link="RR_thigh" />
+    <child link="RR_calf" />
+    <axis xyz="0 1 0" />
+    <limit lower="-2.82" upper="-0.43" effort="320" velocity="14" />
+  </joint>
+  <link name="RR_calf_rotor">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0" />
+      <mass value="0.2734" />
+      <inertia ixx="0.000144463" ixy="0.0" ixz="0.0" iyy="0.000144463" iyz="0.0" izz="0.000263053" />
+    </inertial>
+  </link>
+  <joint name="RR_calf_rotor_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0.05788 0" />
+    <parent link="RR_thigh" />
+    <child link="RR_calf_rotor" />
+  </joint>
+  <link name="RR_foot">
+    <inertial>
+      <origin xyz="-0.006511 0 -0.010144" rpy="0 0 0" />
+      <mass value="0.126" />
+      <inertia ixx="3.8E-05" ixy="0" ixz="1.1E-05" iyy="4.1E-05" iyz="0" izz="4.2E-05" />
+    </inertial>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.57 0 0" />
+      <geometry>
+        <sphere radius="0.032" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="RR_foot_joint" type="fixed" dont_collapse="true">
+    <origin xyz="0 -8.6984E-05 -0.35" rpy="0 0 0" />
+    <parent link="RR_calf" />
+    <child link="RR_foot" />
+  </joint>
+  <link name="f_oc_link">
+    <inertial>
+      <origin xyz="-3.39E-15 1.46E-16 -6.11E-16" rpy="0 0 0" />
+      <mass value="4.19E-15" />
+      <inertia ixx="1.68E-27" ixy="-3.89E-44" ixz="5.04E-44" iyy="1.68E-27" iyz="2.81E-45" izz="1.68E-27" />
+    </inertial>
+  </link>
+  <joint name="joint_f_oc" type="fixed">
+    <origin xyz="0.39079 0 -0.013433" rpy="-1.5708 0 -1.5708" />
+    <parent link="base_link" />
+    <child link="f_oc_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="r_oc_link">
+    <inertial>
+      <origin xyz="-0.39143 1.52E-07 -0.011961" rpy="0 0 0" />
+      <mass value="4.19E-12" />
+      <inertia ixx="1.68E-22" ixy="9.03E-39" ixz="0" iyy="1.68E-22" iyz="-1.2E-38" izz="1.68E-22" />
+    </inertial>
+  </link>
+  <joint name="joint_r_oc" type="fixed">
+    <origin xyz="-0.38451 0 -0.023249" rpy="-1.5708 0 1.5708" />
+    <parent link="base_link" />
+    <child link="r_oc_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <joint name="arm_mount_joint" type="fixed">
+    <origin xyz="-0.208 0 0.094" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="arm_base_link" />
+  </joint>
+  <link name="arm_base_link">
+    <inertial>
+      <origin xyz="0.00020481 -8.2366E-05 0.043092" rpy="0 0 0" />
+      <mass value="1.1" />
+      <inertia ixx="0.00082415" ixy="-2.9296E-06" ixz="2.8721E-05" iyy="0.00082056" iyz="-2.2126E-06" izz="0.00068567" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/rml63iii_b/base_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.062" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.052" length="0.045" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="arm_link_1">
+    <inertial>
+      <origin xyz="-0.0129 0.0001 -0.0298" rpy="0 0 0" />
+      <mass value="1.5979" />
+      <inertia ixx="0.0017312851" ixy="-0.0000201865" ixz="0.0006018106" iyy="0.0031817492" iyz="0.0000016777" izz="0.0025668855" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/rml63iii_b/link_1.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.05 0 -0.005" rpy="-1.5708 0 1.5708" />
+      <geometry>
+        <cylinder radius="0.042" length="0.045" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="arm_joint_1" type="revolute">
+    <origin xyz="0 0 0.1625" rpy="0 0 0" />
+    <parent link="arm_base_link" />
+    <child link="arm_link_1" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.106" upper="3.106" effort="60" velocity="3.14" />
+  </joint>
+  <link name="arm_link_2">
+    <inertial>
+      <origin xyz="0.1098 0.0001 -0.0672" rpy="0 0 0" />
+      <mass value="2.9903" />
+      <inertia ixx="0.0032215462" ixy="0.0000006897" ixz="0.0040170668" iyy="0.0532159255" iyz="0.0000012973" izz="0.0524195464" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/rml63iii_b/link_2.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.19 0 -0.071" rpy="1.5708 0 1.5708" />
+      <geometry>
+        <cylinder radius="0.042" length="0.24" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="arm_joint_2" type="revolute">
+    <origin xyz="-0.086 0 0" rpy="1.5708 -1.5708 3.1416" />
+    <parent link="arm_link_1" />
+    <child link="arm_link_2" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.106" upper="3.106" effort="60" velocity="3.14" />
+  </joint>
+  <link name="arm_link_3">
+    <inertial>
+      <origin xyz="0.0144 -0.0056 -0.0294" rpy="0 0 0" />
+      <mass value="1.357" />
+      <inertia ixx="0.0019004631" ixy="0.0003993072" ixz="-0.0005755251" iyy="0.0026290758" iyz="0.0002275281" izz="0.0021313348" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/rml63iii_b/link_3.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.035 -0.01 -0.005" rpy="1.5708 0 0.16875" />
+      <geometry>
+        <cylinder radius="0.040" length="0.04" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="arm_joint_3" type="revolute">
+    <origin xyz="0.38 0 0" rpy="0 0 1.5708" />
+    <parent link="arm_link_2" />
+    <child link="arm_link_3" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.106" upper="2.5307" effort="30" velocity="3.14" />
+  </joint>
+  <link name="arm_link_4">
+    <inertial>
+      <origin xyz="-0.0001 -0.023 0.2362" rpy="0 0 0" />
+      <mass value="1.8636" />
+      <inertia ixx="0.0233659749" ixy="-0.0000002808" ixz="-0.000011416" iyy="0.0219583225" iyz="0.0054859936" izz="0.0026979008" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/rml63iii_b/link_4.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 -0.027 -0.18" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.042" length="0.18" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="arm_joint_4" type="revolute">
+    <origin xyz="0.069 -0.405 0" rpy="1.5708 0 0" />
+    <parent link="arm_link_3" />
+    <child link="arm_link_4" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.106" upper="3.106" effort="30" velocity="3.14" />
+  </joint>
+  <link name="arm_link_5">
+    <inertial>
+      <origin xyz="0.0001 0.0326 -0.0152" rpy="0 0 0" />
+      <mass value="1.0227" />
+      <inertia ixx="0.0019750111" ixy="0.0000021684" ixz="-0.0000014555" iyy="0.0007714019" iyz="-0.0005071366" izz="0.0016577729" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/rml63iii_b/link_5.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0.035 -0.01" rpy="-1.5708 0 0" />
+      <geometry>
+        <cylinder radius="0.035" length="0.035" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="arm_joint_5" type="revolute">
+    <origin xyz="0 0 0" rpy="1.5708 0 3.1416" />
+    <parent link="arm_link_4" />
+    <child link="arm_link_5" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.106" upper="3.106" effort="10" velocity="3.14" />
+  </joint>
+  <link name="arm_link_6">
+    <inertial>
+      <origin xyz="-0.0005 0 -0.0101" rpy="0 0 0" />
+      <mass value="0.107" />
+      <inertia ixx="0.0000427569" ixy="-0.0000000681" ixz="-0.0000001774" iyy="0.0000353575" iyz="0.0000000298" izz="0.0000639583" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/rml63iii_b/link_6.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.01 0 -0.018" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.030" length="0.02" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="arm_joint_6" type="revolute">
+    <origin xyz="0 0.1151 0" rpy="1.5708 0 3.1416" />
+    <parent link="arm_link_5" />
+    <child link="arm_link_6" />
+    <axis xyz="0 0 1" />
+    <limit lower="-6.28" upper="6.28" effort="10" velocity="3.14" />
+  </joint>
+  <link name="camera_connection_plate_link">
+    <inertial>
+      <origin xyz="0.038 0.00475 0" rpy="0 0 0" />
+      <mass value="0.05" />
+      <inertia ixx="2.0E-05" ixy="0" ixz="0" iyy="2.0E-05" iyz="0" izz="2.0E-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/connection_plate/camera_connection_plate.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="connection_plate_material">
+        <color rgba="0.25 0.25 0.25 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.038 0.00475 0" rpy="0 0 0" />
+      <geometry>
+        <box size="0.134 0.010 0.090" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="arm_link6_to_camera_connection_plate_joint" type="fixed">
+    <origin xyz="0.0 0.0 -0.0" rpy="-1.5707963267948966 0 0" />
+    <parent link="arm_link_6" />
+    <child link="camera_connection_plate_link" />
+  </joint>
+  <link name="d435_camera_link">
+    <inertial>
+      <origin xyz="0 0 -0.0125" rpy="0 0 0" />
+      <mass value="0.072" />
+      <inertia ixx="1.0E-05" ixy="0" ixz="0" iyy="1.0E-05" iyz="0" izz="1.0E-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0.000081 -0.012525 -0.012525" rpy="-1.5707963267948966 0 -3.141592653589793" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/d435_camera/d435_camera.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="d435_camera_material">
+        <color rgba="0.08 0.08 0.08 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.0125" rpy="0 0 0" />
+      <geometry>
+        <box size="0.100 0.040 0.040" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="connection_plate_to_d435_camera_joint" type="fixed">
+    <origin xyz="0.08 -0.015 0" rpy="0 -1.5707963267948966 0" />
+    <parent link="camera_connection_plate_link" />
+    <child link="d435_camera_link" />
+  </joint>
+  <link name="gripper_base_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0" />
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+    </inertial>
+    <visual>
+      <origin xyz="-0.0475 -0.0326 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/gripper_pgi/base_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.75294 0.75294 0.75294 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0081856 -0.00175 0.057" rpy="0 0 0" />
+      <geometry>
+        <box size="0.09 0.052 0.07" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="gripper_finger1_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0" />
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+    </inertial>
+    <visual>
+      <origin xyz="-0.0485 -0.035 -0.0758" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/gripper_pgi/finger1_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0485 -0.035 -0.0758" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/gripper_pgi/finger1_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="gripper_finger1_joint" type="prismatic">
+    <origin xyz="0.041 0.01815 0.08" rpy="0 0 0" />
+    <parent link="gripper_base_link" />
+    <child link="gripper_finger1_link" />
+    <axis xyz="-1 0 0" />
+    <limit lower="0" upper="0.040" effort="140" velocity="1" />
+  </joint>
+  <link name="gripper_finger2_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0" />
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+    </inertial>
+    <visual>
+      <origin xyz="-0.019 -0.012 -0.0758" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/gripper_pgi/finger2_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.019 -0.012 -0.0758" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/gripper_pgi/finger2_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="gripper_finger2_joint" type="prismatic">
+    <origin xyz="-0.041 -0.01815 0.08" rpy="0 0 0" />
+    <parent link="gripper_base_link" />
+    <child link="gripper_finger2_link" />
+    <axis xyz="1 0 0" />
+    <limit lower="-0.040" upper="0" effort="140" velocity="1" />
+    <mimic joint="gripper_finger1_joint" multiplier="1" offset="0" />
+  </joint>
+  <joint name="arm_link6_to_gripper_joint" type="fixed" dont_collapse="true">
+    <origin xyz="0 0 0.005" rpy="0 0 1.5707963267948966" />
+    <parent link="arm_link_6" />
+    <child link="gripper_base_link" />
+  </joint>
+  <link name="si63_arm_guard_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/si63_upper/si63_arm_guard_1.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="si63_upper_guard">
+        <color rgba="0.45 0.45 0.45 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.086 -0.111663086 0.144000004" rpy="0 0 0" />
+      <geometry>
+        <box size="0.07 0.07 0.08" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="si63_arm_guard_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="si63_arm_guard_link" />
+  </joint>
+  <link name="si63_arm_guard_2_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/si63_upper/si63_arm_guard_2.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="si63_upper_guard">
+        <color rgba="0.45 0.45 0.45 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.086 0.101663086 0.144000004" rpy="0 0 0" />
+      <geometry>
+        <box size="0.07 0.07 0.08" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="si63_arm_guard_2_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="si63_arm_guard_2_link" />
+  </joint>
+  <link name="si63_back_shell_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/si63_upper/si63_back_shell.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="si63_back_shell_material">
+        <color rgba="0.72 0.72 0.72 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0200701256 -0.00224804688 0.107013397" rpy="0 0 0" />
+      <geometry>
+        <box size="0.221500008 0.208 0.042" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="si63_back_shell_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="si63_back_shell_link" />
+  </joint>
+  <link name="si63_b2_dock_shell_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://unitree_b2rm/meshes/si63_upper/si63_b2_dock_shell.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="si63_b2_dock_shell_material">
+        <color rgba="0.55 0.55 0.55 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.180070312 -0.00224804688 0.107013397" rpy="0 0 0" />
+      <geometry>
+        <box size="0.14 0.208 0.042" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="si63_b2_dock_shell_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="si63_b2_dock_shell_link" />
+  </joint>
+  <link name="si63_back_payload_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="6.82" />
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6" />
+    </inertial>
+  </link>
+  <joint name="si63_back_payload_joint" type="fixed">
+    <origin xyz="0.35 0.05 0.0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="si63_back_payload_link" />
+  </joint>
+</robot>

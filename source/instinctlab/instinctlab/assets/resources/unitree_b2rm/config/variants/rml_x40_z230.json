@@ -1,0 +1,80 @@
+{
+  "step": "/home/qx100/Desktop/code/DQ_WBC_hyt/DQ_low-level_hyt/URDF_Assembly/SI63_总装.STEP",
+  "source_variant": "step_rml_model",
+  "variant": {
+    "name": "rml_x40_z230",
+    "description": "step_rml_model with zero RPY, x moved forward 40 mm, slightly lowered height"
+  },
+  "b2": {
+    "name": "B2模型简化_双风扇(1)",
+    "path": "SI63_总装/NAUO1/B2模型简化_双风扇(1)",
+    "matrix_mm": [
+      [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ]
+  },
+  "arm": {
+    "name": "RML63II-B_robot_model_1.STEP",
+    "path": "SI63_总装/NAUO2/SI63_上装分总成.STEP/NAUO14/RML63II-B_robot_model_1.STEP",
+    "matrix_mm": [
+      [
+        1.0,
+        2.465190328815662e-32,
+        2.901949486880244e-32,
+        0.07011918049945877
+      ],
+      [
+        -2.465190328815662e-32,
+        1.0,
+        -1.232595164407831e-32,
+        -111.49859644926397
+      ],
+      [
+        -2.0284311707510796e-32,
+        1.232595164407831e-32,
+        1.0,
+        244.0133927674711
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ]
+  },
+  "mount": {
+    "xyz": [
+      0.04,
+      -0.11149859644926398,
+      0.23
+    ],
+    "rpy": [
+      0.0,
+      0.0,
+      0.0
+    ]
+  }
+}
