@@ -13,7 +13,9 @@ from instinctlab.managers import MultiRewardCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
 from isaaclab.sensors.ray_caster.patterns import PinholeCameraPatternCfg
+from isaaclab.assets import AssetBaseCfg
 import isaaclab.sim as sim_utils
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 
 import instinctlab.tasks.parkour.mdp as mdp
@@ -31,6 +33,14 @@ from instinctlab.terrains import (
 from instinctlab.terrains.terrain_generator_cfg import FiledTerrainGeneratorCfg
 from instinctlab.terrains.terrain_generator import FiledTerrainGenerator
 from instinctlab.terrains.shared_terrain_cfg import TRAINING_SUB_TERRAINS
+from instinctlab.utils.noise import (
+    CropAndResizeCfg,
+    DepthArtifactNoiseCfg,
+    DepthNormalizationCfg,
+    GaussianBlurNoiseCfg,
+    RandomGaussianNoiseCfg,
+    RangeBasedGaussianNoiseCfg,
+)
 
 __file_dir__ = os.path.dirname(os.path.realpath(__file__))
 
@@ -73,6 +83,14 @@ class B2RMSceneCfg(InteractiveSceneCfg):
 
     robot = B2RM_CFG
 
+    sky_light = AssetBaseCfg(
+        prim_path="/World/skyLight",
+        spawn=sim_utils.DomeLightCfg(
+            intensity=3000.0,
+            texture_file=f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
+        ),
+    )
+
     left_height_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/FL_foot",
         offset=RayCasterCfg.OffsetCfg(pos=(0.04, 0.0, 0.1)),
@@ -114,12 +132,24 @@ class B2RMSceneCfg(InteractiveSceneCfg):
         ),
         debug_vis=False,
         data_types=["distance_to_image_plane"],
+        update_period=0.02,
+        depth_clipping_behavior="max",
         offset=NoisyGroupedRayCasterCameraCfg.OffsetCfg(
             pos=(0.0, 0.0, 0.3),
             rot=(0.9135367613482678, 0.004363309284746571, 0.4067366430758002, 0.0),
             convention="world",
         ),
         min_distance=0.1,
+        noise_pipeline={
+            "crop_and_resize": CropAndResizeCfg(crop_region=(18, 0, 16, 16)),
+            "gaussian_blur": GaussianBlurNoiseCfg(kernel_size=3, sigma=1),
+            "depth_normalization": DepthNormalizationCfg(
+                depth_range=(0.0, 2.5),
+                normalize=True,
+                output_range=(0.0, 1.0),
+            ),
+        },
+        data_histories={"distance_to_image_plane_noised": 37},
     )
 
     leg_volume_points = VolumePointsCfg(

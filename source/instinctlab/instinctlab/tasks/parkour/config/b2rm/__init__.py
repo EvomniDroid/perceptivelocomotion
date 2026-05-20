@@ -11,7 +11,7 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{task_entry}.b2rm_parkour_cfg:B2RMParkourEnvCfg",
-        "instinct_rl_cfg_entry_point": f"{agents.__name__}.instinct_rl_amp_cfg:B2RMParkourPPORunnerCfg",
+        "instinct_rl_cfg_entry_point": f"{agents.__name__}.instinct_rl_ppo_cfg:B2RMParkourPPORunnerCfg",
     },
 )
 
@@ -22,6 +22,6 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{task_entry}.b2rm_parkour_cfg:B2RMParkourEnvCfg_PLAY",
-        "instinct_rl_cfg_entry_point": f"{agents.__name__}.instinct_rl_amp_cfg:B2RMParkourPPORunnerCfg",
+        "instinct_rl_cfg_entry_point": f"{agents.__name__}.instinct_rl_ppo_cfg:B2RMParkourPPORunnerCfg",
     },
 )
