@@ -51,9 +51,10 @@ parser.add_argument("--env_cfg", action="store_true", default=False, help="从�
 parser.add_argument("--agent_cfg", action="store_true", default=False, help="从文件加载智能体配置。")
 parser.add_argument("--sample", action="store_true", default=False, help="使用随机采样动作而非策略。")
 parser.add_argument("--zero_act_until", type=int, default=0, help="到指定步数前动作为零。")
-parser.add_argument("--keyboard_control", action="store_true", default=False, help="启用键盘控制。")
+parser.add_argument("--keyboard_control", action="store_true", default=False, help="启用键盘控制(WASD走, QE转, X归零)。")
 parser.add_argument("--keyboard_linvel_step", type=float, default=0.5, help="键盘每次调整的线速度增量。")
 parser.add_argument("--keyboard_angvel", type=float, default=1.0, help="键盘控制的角速度。")
+parser.add_argument("--free_view", action="store_true", default=False, help="自由视角（不跟随机器人）。")
 parser.add_argument("--debug_ray", action="store_true", default=False, help="启用射线检测可视化。")
 parser.add_argument("--save_depth_interval", type=int, default=0, help="每N步保存一次俯视深度图，0表示禁用。")
 parser.add_argument("--save_record_rgb_interval", type=int, default=0, help="每N步保存一次camera_rgb_record的RGB和深度图，0表示禁用。")
@@ -160,6 +161,11 @@ def main():
     if args_cli.keyboard_control:
         env_cfg.scene.num_envs = 1
         env_cfg.episode_length_s = 1e10
+        if args_cli.free_view:
+            if hasattr(env_cfg, "viewer"):
+                env_cfg.viewer.origin_type = "world"
+                env_cfg.viewer.eye = (4.0, 4.0, 4.0)
+                env_cfg.viewer.lookat = (0.0, 0.0, 0.0)
 
     if args_cli.debug_ray:
         env_cfg.scene.left_height_scanner.debug_vis = True
@@ -281,11 +287,17 @@ def main():
                 override_command[:, 0] += args_cli.keyboard_linvel_step
         if e.input == carb.input.KeyboardInput.S:
             if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
-                override_command[:, 2] = 0.0
-        if e.input == carb.input.KeyboardInput.F:
+                override_command[:, 0] -= args_cli.keyboard_linvel_step
+        if e.input == carb.input.KeyboardInput.A:
+            if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
+                override_command[:, 1] += args_cli.keyboard_linvel_step
+        if e.input == carb.input.KeyboardInput.D:
+            if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
+                override_command[:, 1] -= args_cli.keyboard_linvel_step
+        if e.input == carb.input.KeyboardInput.Q:
             if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
                 override_command[:, 2] = args_cli.keyboard_angvel
-        if e.input == carb.input.KeyboardInput.G:
+        if e.input == carb.input.KeyboardInput.E:
             if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
                 override_command[:, 2] = -args_cli.keyboard_angvel
         if e.input == carb.input.KeyboardInput.X:

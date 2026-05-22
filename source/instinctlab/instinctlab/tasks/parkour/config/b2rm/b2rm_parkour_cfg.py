@@ -362,8 +362,15 @@ class B2RMCommandsCfg:
 class B2RMTerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     terrain_out_bound = DoneTerm(func=mdp.terrain_out_of_bounds, time_out=True, params={"distance_buffer": 2.0})
+    base_contact = DoneTerm(
+        func=mdp.illegal_contact,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_link"),
+            "threshold": 1.0,
+        },
+    )
     bad_orientation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 1.0})
-    root_height = DoneTerm(func=mdp.root_height_below_env_origin_minimum, params={"minimum_height": 0.5})
+    root_height = DoneTerm(func=mdp.root_height_below_env_origin_minimum, params={"minimum_height": 0.2})
 
 
 @configclass
