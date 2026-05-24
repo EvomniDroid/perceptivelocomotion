@@ -8,6 +8,8 @@ from isaaclab.terrains import FlatPatchSamplingCfg
 from instinctlab.terrains.terrain_generator_cfg import FiledTerrainGeneratorCfg
 from instinctlab.terrains.terrain_generator import FiledTerrainGenerator
 from instinctlab.terrains import (
+    PerlinBowlPitTerrainCfg,
+    PerlinPitTerrainCfg,
     PerlinPlaneTerrainCfg,
     PerlinSquareGapTerrainCfg,
     PerlinPyramidStairsTerrainCfg,
@@ -26,6 +28,7 @@ from instinctlab.terrains import (
     PerlinTiltedRampTerrainCfg,
     PerlinSlopeTerrainCfg,
     PerlinCrossStoneTerrainCfg,
+    PerlinCircleTrackTerrainCfg,
 )
 
 
@@ -882,5 +885,145 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
                 num_patches=10, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.1
             ),
         },
+    ),
+    "square_gaps_curriculum": PerlinSquareGapTerrainCfg(
+        proportion=0.10,
+        gap_distance_range=(0.3, 0.8),
+        gap_depth=(0.1, 0.8),
+        platform_width=1.5,
+        border_width=0.3,
+        wall_prob=[0.0, 0.0, 0.0, 0.0],
+        wall_height=5.0,
+        wall_thickness=0.05,
+        flat_patch_sampling={
+            "target": FlatPatchSamplingCfg(
+                num_patches=10,
+                patch_radius=[0.05, 0.10, 0.15, 0.20],
+                max_height_diff=0.1,
+            ),
+        },
+    ),
+    "raised_mound": PerlinBowlPitTerrainCfg(
+        proportion=0.10,
+        pit_depth=(0.05, 1.0),
+        pit_radius=(1.5, 1.5),
+        wall_prob=[0.0, 0.0, 0.0, 0.0],
+        wall_height=5.0,
+        wall_thickness=0.05,
+        perlin_cfg=PerlinPlaneTerrainCfg(
+            noise_scale=0.02,
+            noise_frequency=20,
+            fractal_octaves=2,
+            fractal_lacunarity=2.0,
+            fractal_gain=0.25,
+            centering=True,
+        ),
+        flat_patch_sampling={
+            "target": FlatPatchSamplingCfg(
+                num_patches=10,
+                patch_radius=[0.05, 0.10, 0.15, 0.20],
+                max_height_diff=0.1,
+            ),
+        },
+    ),
+    "pit_crater": PerlinPitTerrainCfg(
+        proportion=0.10,
+        pit_depth=(0.05, 1.0),
+        pit_radius=(1.5, 1.5),
+        wall_prob=[0.0, 0.0, 0.0, 0.0],
+        wall_height=5.0,
+        wall_thickness=0.05,
+        perlin_cfg=PerlinPlaneTerrainCfg(
+            noise_scale=0.02,
+            noise_frequency=20,
+            fractal_octaves=2,
+            fractal_lacunarity=2.0,
+            fractal_gain=0.25,
+            centering=True,
+        ),
+        flat_patch_sampling={
+            "target": FlatPatchSamplingCfg(
+                num_patches=10,
+                patch_radius=[0.05, 0.10, 0.15, 0.20],
+                max_height_diff=0.1,
+            ),
+        },
+    ),
+    "raised_mound": PerlinBowlPitTerrainCfg(
+        proportion=0.10,
+        pit_depth=(0.05, 1.0),
+        pit_radius=(1.5, 1.5),
+        wall_prob=[0.0, 0.0, 0.0, 0.0],
+        wall_height=5.0,
+        wall_thickness=0.05,
+        perlin_cfg=PerlinPlaneTerrainCfg(
+            noise_scale=0.02,
+            noise_frequency=20,
+            fractal_octaves=2,
+            fractal_lacunarity=2.0,
+            fractal_gain=0.25,
+            centering=True,
+        ),
+        flat_patch_sampling={
+            "target": FlatPatchSamplingCfg(
+                num_patches=10,
+                patch_radius=[0.05, 0.10, 0.15, 0.20],
+                max_height_diff=0.1,
+            ),
+        },
+    ),
+    "pit_crater": PerlinPitTerrainCfg(
+        proportion=0.10,
+        pit_depth=(0.05, 1.0),
+        pit_radius=(1.5, 1.5),
+        wall_prob=[0.0, 0.0, 0.0, 0.0],
+        wall_height=5.0,
+        wall_thickness=0.05,
+        perlin_cfg=PerlinPlaneTerrainCfg(
+            noise_scale=0.02,
+            noise_frequency=20,
+            fractal_octaves=2,
+            fractal_lacunarity=2.0,
+            fractal_gain=0.25,
+            centering=True,
+        ),
+        flat_patch_sampling={
+            "target": FlatPatchSamplingCfg(
+                num_patches=10,
+                patch_radius=[0.05, 0.10, 0.15, 0.20],
+                max_height_diff=0.1,
+            ),
+        },
+    ),
+    "wave": PerlinWaveTerrainCfg(
+        proportion=0.10,
+        amplitude_range=(0.1, 0.3),
+        num_waves=3,
+        border_width=0.0,
+        wall_prob=[0.0, 0.0, 0.0, 0.0],
+        wall_height=5.0,
+        wall_thickness=0.05,
+        flat_patch_sampling={
+            "target": FlatPatchSamplingCfg(
+                num_patches=10,
+                patch_radius=[0.05, 0.10, 0.15, 0.20],
+                max_height_diff=0.1,
+            ),
+        },
+    ),
+    "circle_track": PerlinCircleTrackTerrainCfg(
+        proportion=0.10,
+        track_radius=(3.0, 6.0),
+        track_width=1.5,
+        track_depth=(0.1, 0.3),
+        center_size=2.0,
+        perlin_cfg=PerlinPlaneTerrainCfg(
+            noise_scale=0.02,
+            noise_frequency=20,
+            fractal_octaves=2,
+            fractal_lacunarity=2.0,
+            fractal_gain=0.25,
+            centering=True,
+        ),
     ),
 })

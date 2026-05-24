@@ -9,7 +9,9 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
+from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from instinctlab.managers import MultiRewardCfg
+from instinctlab.tasks.parkour.config.parkour_env_cfg import CurriculumCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
 from isaaclab.sensors.ray_caster.patterns import PinholeCameraPatternCfg
@@ -225,6 +227,15 @@ class B2RMRewardsCfg:
             "threshold": 1.0,
         },
     )
+    feet_close_xy_gauss = RewTerm(
+        func=mdp.feet_close_xy_gauss,
+        weight=-0.5,
+        params={
+            "threshold": 0.25,
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
+            "std": 0.05,
+        },
+    )
     joint_deviation_hip = RewTerm(
         func=mdp.joint_deviation_square,
         weight=-0.5,
@@ -243,7 +254,7 @@ class B2RMRewardsCfg:
             )
         },
     )
-    ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
+    ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.02)
     dof_torques_l2 = RewTerm(
         func=mdp.joint_torques_l2,
         weight=-1.5e-07,
@@ -270,10 +281,10 @@ class B2RMRewardsCfg:
 
 @configclass
 class B2RMPolicyObsCfg(ObsGroup):
-    joint_pos = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
-    joint_vel = ObsTerm(func=mdp.joint_vel_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
-    base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.01, n_max=0.01))
-    base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.01, n_max=0.01))
+    joint_pos = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01), clip=(-10, 10))
+    joint_vel = ObsTerm(func=mdp.joint_vel_rel, noise=Unoise(n_min=-0.01, n_max=0.01), clip=(-50, 50))
+    base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.01, n_max=0.01), clip=(-10, 10))
+    base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.01, n_max=0.01), clip=(-20, 20))
     projected_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.01, n_max=0.01))
     velocity_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "base_velocity"})
     actions = ObsTerm(func=instinct_mdp.last_action)
@@ -354,6 +365,10 @@ class B2RMCommandsCfg:
             "boxes": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
             "mesh_boxes": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
             "hf_pyramid_slope_inv": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
+            "raised_mound": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
+            "pit_crater": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
+            "wave": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
+            "circle_track": {"lin_vel_x": (0.0, 0.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.5, 1.5)},
         },
     )
 
@@ -370,7 +385,6 @@ class B2RMTerminationsCfg:
         },
     )
     bad_orientation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 1.0})
-    root_height = DoneTerm(func=mdp.root_height_below_env_origin_minimum, params={"minimum_height": 0.2})
 
 
 @configclass
@@ -399,6 +413,7 @@ class B2RMParkourEnvCfg(ManagerBasedRLEnvCfg):
     rewards: B2RMRewardsCfgFinal = B2RMRewardsCfgFinal()
     terminations: B2RMTerminationsCfg = B2RMTerminationsCfg()
     monitors: B2RMMonitorsCfg = B2RMMonitorsCfg()
+    curriculum: CurriculumCfg = CurriculumCfg()
 
     def __post_init__(self):
         super().__post_init__()
@@ -409,6 +424,8 @@ class B2RMParkourEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.physics_material = self.scene.terrain.physics_material
         self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
         self.sim.physx.gpu_collision_stack_size = 2**29
+        self.sim.physx.max_depenetration_velocity = 1.0
+        self.sim.physx.default_buffered_penetration_count = 0
 
         if self.scene.contact_forces is not None:
             self.scene.contact_forces.update_period = self.sim.dt

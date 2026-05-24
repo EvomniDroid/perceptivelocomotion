@@ -125,7 +125,62 @@ def perlin_pyramid_sloped_terrain(difficulty: float, cfg: hf_terrains_cfg.Perlin
         # add perlin noise to the terrain
         hf_raw += perlin_noise
 
-    # round off the heights to the nearest vertical step
+    return np.rint(hf_raw).astype(np.int16)
+
+
+@height_field_to_mesh
+def perlin_circle_track_terrain(difficulty: float, cfg: hf_terrains_cfg.PerlinCircleTrackTerrainCfg) -> np.ndarray:
+    """Generate a circular track terrain for training turning.
+
+    The terrain has a flat center area and a circular ring path around it.
+    The robot is expected to walk in circles following the track.
+
+    Args:
+        difficulty: The difficulty of the terrain (0 to 1). Controls track radius.
+        cfg: The configuration for the terrain.
+
+    Returns:
+        The height field of the terrain as a 2D numpy array.
+    """
+    import numpy as np
+
+    width_pixels = int(cfg.size[0] / cfg.horizontal_scale)
+    length_pixels = int(cfg.size[1] / cfg.horizontal_scale)
+
+    track_radius = cfg.track_radius[0] + difficulty * (cfg.track_radius[1] - cfg.track_radius[0])
+    track_width = cfg.track_width
+    track_depth = cfg.track_depth[0] + difficulty * (cfg.track_depth[1] - cfg.track_depth[0])
+    center_size = cfg.center_size
+
+    center_x = width_pixels // 2
+    center_y = length_pixels // 2
+
+    hf_raw = np.zeros((width_pixels, length_pixels), dtype=np.float32)
+
+    radius_pixels = int(track_radius / cfg.horizontal_scale)
+    width_pixels_half = int(track_width / cfg.horizontal_scale)
+    center_pixels = int(center_size / cfg.horizontal_scale)
+
+    for i in range(width_pixels):
+        for j in range(length_pixels):
+            dist = np.sqrt((i - center_x) ** 2 + (j - center_y) ** 2)
+            if radius_pixels - width_pixels_half < dist < radius_pixels + width_pixels_half:
+                hf_raw[i, j] = -track_depth / cfg.vertical_scale
+            elif dist < center_pixels:
+                hf_raw[i, j] = 0.0
+
+    if cfg.perlin_cfg is not None:
+        perlin_cfg = cfg.perlin_cfg
+        perlin_cfg.size = cfg.size
+        perlin_cfg.horizontal_scale = cfg.horizontal_scale
+        perlin_cfg.vertical_scale = cfg.vertical_scale
+        perlin_cfg.slope_threshold = cfg.slope_threshold
+        perlin_noise = generate_perlin_noise(
+            difficulty,
+            perlin_cfg,
+        )
+        hf_raw += perlin_noise
+
     return np.rint(hf_raw).astype(np.int16)
 
 
@@ -572,7 +627,7 @@ def perlin_gutter_terrain(difficulty: float, cfg: hf_terrains_cfg.PerlinGutterTe
         gutter_length = cfg.gutter_length
 
     if isinstance(cfg.gutter_depth, (list, tuple)):
-        gutter_depth = np.random.uniform(cfg.gutter_depth[0], cfg.gutter_depth[1])
+        gutter_depth = cfg.gutter_depth[0] + difficulty * (cfg.gutter_depth[1] - cfg.gutter_depth[0])
     else:
         gutter_depth = cfg.gutter_depth
 
@@ -614,6 +669,138 @@ def perlin_gutter_terrain(difficulty: float, cfg: hf_terrains_cfg.PerlinGutterTe
         hf_raw += perlin_noise
 
     # round off the heights to the nearest vertical step
+    return np.rint(hf_raw).astype(np.int16)
+
+
+@generate_wall
+@height_field_to_mesh
+def perlin_bowl_pit_terrain(difficulty: float, cfg: hf_terrains_cfg.PerlinBowlPitTerrainCfg) -> np.ndarray:
+    """Generate a bowl-shaped pit terrain where center is low and edges slope up to ground level.
+
+    The terrain is a smooth bowl/pit shape:
+    - Center of the pit is at the maximum depth
+    - Edges smoothly slope up to ground level (height = 0)
+    - The pit has a circular/oval shape
+
+    Args:
+        difficulty: The difficulty of the terrain (0-1). Controls pit depth.
+        cfg: The configuration for the terrain.
+
+    Returns:
+        The height field of the terrain as a 2D numpy array.
+    """
+    # resolve terrain configuration
+    if isinstance(cfg.pit_depth, (list, tuple)):
+        pit_depth = cfg.pit_depth[0] + difficulty * (cfg.pit_depth[1] - cfg.pit_depth[0])
+    else:
+        pit_depth = cfg.pit_depth
+
+    if isinstance(cfg.pit_radius, (list, tuple)):
+        pit_radius = cfg.pit_radius[0] + difficulty * (cfg.pit_radius[1] - cfg.pit_radius[0])
+    else:
+        pit_radius = cfg.pit_radius
+
+    # switch to discrete units
+    width_pixels = int(cfg.size[0] / cfg.horizontal_scale)
+    length_pixels = int(cfg.size[1] / cfg.horizontal_scale)
+    pit_depth_px = int(pit_depth / cfg.vertical_scale)
+    pit_radius_px = int(pit_radius / cfg.horizontal_scale)
+
+    # create coordinate grids
+    x = np.arange(width_pixels)
+    y = np.arange(length_pixels)
+    X, Y = np.meshgrid(x, y, indexing='ij')
+
+    # center of the terrain
+    center_x = width_pixels // 2
+    center_y = length_pixels // 2
+
+    # compute distance from center
+    dist = np.sqrt((X - center_x)**2 + (Y - center_y)**2)
+
+    # create mound shape: flat top with vertical walls (raised platform/hill on ground)
+    hf_raw = np.zeros((width_pixels, length_pixels))
+    hf_raw[dist < pit_radius_px] = pit_depth_px  # positive height (raised)
+
+    # add perlin noise if configured
+    if cfg.perlin_cfg is not None:
+        perlin_cfg = cfg.perlin_cfg
+        perlin_cfg.size = cfg.size
+        perlin_cfg.horizontal_scale = cfg.horizontal_scale
+        perlin_cfg.vertical_scale = cfg.vertical_scale
+        perlin_cfg.slope_threshold = cfg.slope_threshold
+        perlin_noise = generate_perlin_noise(
+            difficulty,
+            perlin_cfg,  # type: ignore[arg-type]
+        )
+        hf_raw += perlin_noise
+
+    return np.rint(hf_raw).astype(np.int16)
+
+
+@generate_wall
+@height_field_to_mesh
+def perlin_pit_terrain(difficulty: float, cfg: hf_terrains_cfg.PerlinPitTerrainCfg) -> np.ndarray:
+    """Generate a pit/crater terrain below ground level.
+
+    The terrain is a flat-bottomed pit with vertical walls:
+    - Bottom of the pit is below ground (negative height)
+    - Edges have vertical walls (90-degree drop)
+    - Robot spawns in the pit and must jump out
+
+    Args:
+        difficulty: The difficulty of the terrain (0-1). Controls pit depth.
+        cfg: The configuration for the terrain.
+
+    Returns:
+        The height field of the terrain as a 2D numpy array.
+    """
+    # resolve terrain configuration
+    if isinstance(cfg.pit_depth, (list, tuple)):
+        pit_depth = cfg.pit_depth[0] + difficulty * (cfg.pit_depth[1] - cfg.pit_depth[0])
+    else:
+        pit_depth = cfg.pit_depth
+
+    if isinstance(cfg.pit_radius, (list, tuple)):
+        pit_radius = cfg.pit_radius[0] + difficulty * (cfg.pit_radius[1] - cfg.pit_radius[0])
+    else:
+        pit_radius = cfg.pit_radius
+
+    # switch to discrete units
+    width_pixels = int(cfg.size[0] / cfg.horizontal_scale)
+    length_pixels = int(cfg.size[1] / cfg.horizontal_scale)
+    pit_depth_px = int(pit_depth / cfg.vertical_scale)
+    pit_radius_px = int(pit_radius / cfg.horizontal_scale)
+
+    # create coordinate grids
+    x = np.arange(width_pixels)
+    y = np.arange(length_pixels)
+    X, Y = np.meshgrid(x, y, indexing='ij')
+
+    # center of the terrain
+    center_x = width_pixels // 2
+    center_y = length_pixels // 2
+
+    # compute distance from center
+    dist = np.sqrt((X - center_x)**2 + (Y - center_y)**2)
+
+    # create pit: flat bottom with vertical walls (90-degree drop below ground)
+    hf_raw = np.zeros((width_pixels, length_pixels))
+    hf_raw[dist < pit_radius_px] = -pit_depth_px  # negative height (below ground)
+
+    # add perlin noise if configured
+    if cfg.perlin_cfg is not None:
+        perlin_cfg = cfg.perlin_cfg
+        perlin_cfg.size = cfg.size
+        perlin_cfg.horizontal_scale = cfg.horizontal_scale
+        perlin_cfg.vertical_scale = cfg.vertical_scale
+        perlin_cfg.slope_threshold = cfg.slope_threshold
+        perlin_noise = generate_perlin_noise(
+            difficulty,
+            perlin_cfg,  # type: ignore[arg-type]
+        )
+        hf_raw += perlin_noise
+
     return np.rint(hf_raw).astype(np.int16)
 
 
@@ -1273,8 +1460,11 @@ def perlin_square_gap_terrain(difficulty: float, cfg: hf_terrains_cfg.PerlinSqua
     # create central platform
     hf_raw[platform_start_x:platform_end_x, platform_start_y:platform_end_y] = 0
 
-    # groove depth in pixels (use cfg.gap_depth if available, else default to one vertical unit)
-    gap_depth = np.random.uniform(cfg.gap_depth[0], cfg.gap_depth[1])
+    # groove depth in pixels (use cfg.gap_depth if available, with difficulty-based interpolation)
+    if isinstance(cfg.gap_depth, (list, tuple)):
+        gap_depth = cfg.gap_depth[0] + difficulty * (cfg.gap_depth[1] - cfg.gap_depth[0])
+    else:
+        gap_depth = cfg.gap_depth
     gap_value = -round(gap_depth / cfg.vertical_scale)
 
     # draw square "spiral" grooves (concentric square borders) outward from the platform
