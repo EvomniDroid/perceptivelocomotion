@@ -3,8 +3,9 @@ from __future__ import annotations
 import torch
 from typing import TYPE_CHECKING
 
-from isaaclab.assets import RigidObject
+from isaaclab.assets import Articulation, RigidObject
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.utils.math import euler_xyz_from_quat
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -49,3 +50,26 @@ def root_height_below_env_origin_minimum(
     asset: RigidObject = env.scene[asset_cfg.name]
     terrain_base_height = torch.clamp(env.scene.env_origins[:, 2], max=0.0)
     return asset.data.root_pos_w[:, 2] - terrain_base_height < minimum_height
+
+
+def bad_pitch(
+    env: ManagerBasedRLEnv,
+    max_pitch: float = 0.5,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Terminate when the base pitch (绕 y 轴) exceeds the limit.
+
+    不同于 `bad_orientation`（3D 总姿态角），这里**只检查 pitch 后仰**：
+      - pitch > 0 → 后仰
+      - max_pitch 默认 0.5 rad ≈ 28°
+
+    这样能在机器人刚开始"坐"的时候立刻重置，避免它收敛到 spider-pose。
+
+    Args:
+        max_pitch: 后仰阈值（弧度），超过则终止。
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    quat_w = asset.data.root_quat_w
+    _, pitch, _ = euler_xyz_from_quat(quat_w)
+    return pitch > max_pitch
+

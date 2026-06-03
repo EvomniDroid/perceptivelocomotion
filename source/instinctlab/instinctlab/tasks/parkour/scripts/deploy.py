@@ -47,6 +47,7 @@ parser.add_argument("--save_fushi_depth_interval", type=int, default=0, help="�
 parser.add_argument("--fall_rate_threshold", type=float, default=0.5, help="切换到安全模式的摔倒率阈值")
 parser.add_argument("--use_vis_terrain", action="store_true", default=False, help="使用vis.py的地形配置进行泛化测试")
 parser.add_argument("--use_frontier_test_terrain", action="store_true", default=False, help="使用FRONTIER_TEST_TERRAIN地形（预设摔倒率的简单地形）")
+parser.add_argument("--use_atec_d_terrain", action="store_true", default=False, help="使用ATEC D赛题地形（坑+平台）进行测试")
 parser.add_argument("--preset_fall_rate_map", action="store_true", default=False, help="使用预设摔倒率地图（棋盘格），可独立于terrain使用")
 parser.add_argument("--vel_debug", action="store_true", default=False, help="启用速度调试模式，使用直接速度指令替代RL策略")
 parser.add_argument("--vel", type=str, default="0.5,0.0,0.0", help="调试模式速度向量: vel_x,vel_y,ang_z (逗号分隔，默认0.5,0.0,0.0)")
@@ -101,7 +102,7 @@ from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent
 from isaaclab_tasks.utils import get_checkpoint_path, parse_env_cfg
 from instinctlab.utils.wrappers import InstinctRlVecEnvWrapper
 from instinctlab.utils.wrappers.instinct_rl import InstinctRlOnPolicyRunnerCfg
-from instinctlab.terrains.shared_terrain_cfg import MY_TERRAIN_CFG, FRONTIER_TEST_TERRAIN_CFG
+from instinctlab.terrains.shared_terrain_cfg import MY_TERRAIN_CFG, FRONTIER_TEST_TERRAIN_CFG, ATEC_D_TERRAIN_CFG
 
 sys.path.append("/home/zh/isaac/liveratemodel")
 from model import create_model
@@ -202,7 +203,7 @@ class MotionPlanner:
         print(f"[规划] 目标位置设置为: ({x:.2f}, {y:.2f}) 相对坐标")
 
     def get_action(self, obs, fall_rate, terrain_type, command_obs_slice, vel_debug=False, keyboard_command=None, robot_pos=None, robot_yaw=None, timestep=0):
-        if not vel_debug:
+        if not vel_debug and keyboard_command is None:
             return obs
 
         vel_x, vel_y, ang_z = self._get_blended_velocity(keyboard_command, robot_pos, robot_yaw, timestep)
@@ -327,7 +328,15 @@ def main():
         env_cfg.scene.env_spacing = 0.0
         print(f"[INFO] terrain_generator 已设置为 FRONTIER_TEST_TERRAIN_CFG, size={env_cfg.scene.terrain.terrain_generator.size}")
 
-    if getattr(args_cli, 'use_frontier_test_terrain', False) or getattr(args_cli, 'use_vis_terrain', False):
+    if getattr(args_cli, 'use_atec_d_terrain', False):
+        print("[INFO] 使用ATEC D赛题地形进行测试 (ATEC_D_TERRAIN_CFG) — 坑+方块")
+        env_cfg.scene.terrain.terrain_generator = ATEC_D_TERRAIN_CFG
+        env_cfg.scene.terrain.curriculum = False
+        env_cfg.scene.env_spacing = 0.0
+        print(f"[INFO] ATEC_D_TERRAIN_CFG size={ATEC_D_TERRAIN_CFG.size}, num_rows=1, num_cols=1")
+        print("[INFO] 方块已嵌入地形: 0.8×1.0×0.6m, 坑深1m, 宽1.3~1.4m")
+
+    if getattr(args_cli, 'use_frontier_test_terrain', False) or getattr(args_cli, 'use_vis_terrain', False) or getattr(args_cli, 'use_atec_d_terrain', False):
         from isaaclab.assets import RigidObjectCfg
         from isaaclab.sim.spawners.from_files import UsdFileCfg
         from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
@@ -424,7 +433,7 @@ def main():
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if getattr(args_cli, 'video', False) else None)
     print("[DEBUG] 2. gym.make 完成")
 
-    if getattr(args_cli, 'use_frontier_test_terrain', False) or getattr(args_cli, 'use_vis_terrain', False):
+    if getattr(args_cli, 'use_frontier_test_terrain', False) or getattr(args_cli, 'use_vis_terrain', False) or getattr(args_cli, 'use_atec_d_terrain', False):
         print("[DEBUG] 2a. 强制设置固定的 env_origins 和 terrain_levels")
         raw_env = env.unwrapped
         while hasattr(raw_env, 'unwrapped') and not hasattr(raw_env, 'scene'):

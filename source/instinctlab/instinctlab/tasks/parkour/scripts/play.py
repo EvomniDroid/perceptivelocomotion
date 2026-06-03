@@ -281,39 +281,59 @@ def main():
     override_command = torch.zeros(env.num_envs, 3, device=env.device)
     command_obs_slice = get_obs_slice(env.get_obs_segments(), "velocity_commands")
 
+    cmd_display_names = {"W": "前", "S": "后", "A": "左移", "D": "右移", "Q": "左转", "E": "右转", "X": "急停"}
+    _print_vel_help = True
+
+    print("=" * 60)
+    print("键盘控制已启用:")
+    print("  W / S      : 前进 / 后退  (+/-" + str(args_cli.keyboard_linvel_step) + " m/s)")
+    print("  A / D      : 左移 / 右移  (+/-" + str(args_cli.keyboard_linvel_step) + " m/s)")
+    print("  Q / E      : 左转 / 右转  (" + str(args_cli.keyboard_angvel) + " rad/s)")
+    print("  X          : 急停归零")
+    print("  长按可累计叠加速度")
+    print("=" * 60)
+
     def on_keyboard_input(e):
-        if e.input == carb.input.KeyboardInput.W:
+        global _print_vel_help
+        key_map = {
+            carb.input.KeyboardInput.W: (0, 1.0, "W"),
+            carb.input.KeyboardInput.S: (0, -1.0, "S"),
+            carb.input.KeyboardInput.A: (1, 1.0, "A"),
+            carb.input.KeyboardInput.D: (1, -1.0, "D"),
+            carb.input.KeyboardInput.Q: (2, 1.0, "Q"),
+            carb.input.KeyboardInput.E: (2, -1.0, "E"),
+            carb.input.KeyboardInput.X: (-1, 0.0, "X"),
+        }
+        if e.input in key_map:
+            idx, sign, name = key_map[e.input]
             if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
-                override_command[:, 0] += args_cli.keyboard_linvel_step
-        if e.input == carb.input.KeyboardInput.S:
-            if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
-                override_command[:, 0] -= args_cli.keyboard_linvel_step
-        if e.input == carb.input.KeyboardInput.A:
-            if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
-                override_command[:, 1] += args_cli.keyboard_linvel_step
-        if e.input == carb.input.KeyboardInput.D:
-            if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
-                override_command[:, 1] -= args_cli.keyboard_linvel_step
-        if e.input == carb.input.KeyboardInput.Q:
-            if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
-                override_command[:, 2] = args_cli.keyboard_angvel
-        if e.input == carb.input.KeyboardInput.E:
-            if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
-                override_command[:, 2] = -args_cli.keyboard_angvel
-        if e.input == carb.input.KeyboardInput.X:
-            if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
-                override_command[:] = 0.0
+                if name == "X":
+                    override_command[:] = 0.0
+                elif name in ("Q", "E"):
+                    override_command[:, 2] = sign * args_cli.keyboard_angvel
+                else:
+                    override_command[:, idx] += sign * args_cli.keyboard_linvel_step
+                vx = override_command[0, 0].item()
+                vy = override_command[0, 1].item()
+                wz = override_command[0, 2].item()
+                print(f"[键盘] {cmd_display_names.get(name, name):>4s} | cmd=(v_x={vx:+.2f}, v_y={vy:+.2f}, ω_z={wz:+.2f})")
+                _print_vel_help = True
 
     app_window = omni.appwindow.get_default_app_window()
     keyboard = app_window.get_keyboard()
     input = carb.input.acquire_input_interface()
     input.subscribe_to_keyboard_events(keyboard, on_keyboard_input)
 
+    # 获取obs切片信息，用于打印实际速度
+    obs_segments = env.get_obs_segments()
+    vel_slice = get_obs_slice(obs_segments, "base_lin_vel")
+
     # reset environment
     obs, _ = env.get_observations()
     timestep = 0
     episode_counts = {}  # track episodes per env
     num_envs = env.unwrapped.scene.num_envs
+    last_debug_cmd = torch.tensor([999.0, 999.0, 999.0], device=env.device)
     # simulate environment
     while simulation_app.is_running():
         # run everything in inference mode
@@ -336,9 +356,26 @@ def main():
             # env stepping
             obs, rewards, dones, infos = env.step(actions)
 
+            # 打印实际速度 vs 命令速度（命令变化时或每200步）
+            cmd_changed = not torch.allclose(override_command[0], last_debug_cmd, atol=1e-4)
+            if args_cli.keyboard_control and (cmd_changed or timestep % 200 == 0):
+                vel_start = vel_slice[0].start if isinstance(vel_slice[0], slice) else vel_slice[0]
+                actual_vel = obs[0, vel_start:vel_start+3].cpu()
+                cmd = override_command[0].cpu()
+                print(f"[实时] cmd=({cmd[0]:+.2f}, {cmd[1]:+.2f}, {cmd[2]:+.2f})  "
+                      f"实际=({actual_vel[0]:+.2f}, {actual_vel[1]:+.2f}, {actual_vel[2]:+.2f})")
+                last_debug_cmd = override_command[0].clone()
+
             for env_id in range(num_envs):
                 if dones[env_id]:
                     episode_counts[env_id] = episode_counts.get(env_id, 0) + 1
+                    if timestep <= 10 and episode_counts.get(env_id, 1) == 1:
+                        termination_reasons = [k for k in infos.get("episode", {}).keys() if "Episode_Termination" in k]
+                        if termination_reasons:
+                            reasons_str = ", ".join([f"{k}={infos['episode'][k][env_id].item():.3f}" for k in termination_reasons])
+                            print(f"[PLAY] env {env_id} 死亡! 步数={timestep}, 终止原因: {reasons_str}")
+                        else:
+                            print(f"[PLAY] env {env_id} 死亡! 步数={timestep}")
 
             if args_cli.video:
                 env.unwrapped.render()

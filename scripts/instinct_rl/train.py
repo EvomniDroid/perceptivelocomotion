@@ -44,6 +44,7 @@ parser.add_argument(
 parser.add_argument("--debug", action="store_true", default=False, help="Enable debug mode.")
 # train.py 专属参数
 parser.add_argument("--cprofile", action="store_true", default=False, help="Enable cProfile.")
+parser.add_argument("--stage2_at", type=int, default=10000, help="在 N 轮后从平地切换到全地形（0=禁用两阶段）")
 # 附加 Instinct-RL 的命令行参数
 cli_args.add_instinct_rl_args(parser)
 # 附加 AppLauncher 的命令行参数
@@ -86,6 +87,7 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 
 from instinctlab.utils.wrappers import InstinctRlVecEnvWrapper
 from instinctlab.utils.wrappers.instinct_rl import InstinctRlOnPolicyRunnerCfg
+from instinctlab.terrains.shared_terrain_cfg import FLAT_TRAINING_SUB_TERRAINS, TRAINING_SUB_TERRAINS
 
 # 如果在调试模式下，则等待附加 (attach) 调试器
 if args_cli.debug:
@@ -185,10 +187,24 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         log_dir += f"_from{resume_run_name.split('_')[0]}_{resume_run_name.split('_')[1]}"
     # import pdb; pdb.set_trace()
     print("2")
+    # 判断两阶段训练
+    stage2_at = args_cli.stage2_at
+    is_resuming = agent_cfg.resume
+    stage1_completed = False
+
+    if stage2_at > 0 and not is_resuming:
+        print(f"[两阶段] 阶段1: 仅平地训练 {stage2_at} 轮")
+        saved_sub_terrains = env_cfg.scene.terrain.terrain_generator.sub_terrains
+        env_cfg.scene.terrain.terrain_generator.sub_terrains = FLAT_TRAINING_SUB_TERRAINS
+    else:
+        if stage2_at <= 0:
+            print("[训练] 单阶段模式: 直接使用全地形训练")
+        else:
+            print("[训练] 恢复模式: 跳过阶段1")
+
     # 创建 isaac 仿真环境
     print("进入环境构造")
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
-    # import pdb; pdb.set_trace()
     print("2.99")
     print("环境构造完成")
     # 为视频录制套上 Wrapper
@@ -209,42 +225,65 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # 封装环境适配 Instinct-RL 的读取要求
     env = InstinctRlVecEnvWrapper(env)
-    # import pdb; pdb.set_trace()
     print("3")
     # 从 instinct-rl 创建跑者 (runner)
     runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
-    # # 将当前的 git 代码仓库状态写入日志中
     runner.add_git_repo_to_log(__file__)
     # 加载已有的模型检查点 (checkpoint)
-    if agent_cfg.resume:
+    if is_resuming:
         print(f"[INFO]: 从此处加载模型参数与检查点: {resume_path}")
-        # 加载之前训练过的模型
         runner.load(resume_path)
 
-    # 将所有配置参数原样转储 (dump) 到日志目录记录
+    # 将所有配置参数原样转储到日志目录
     if not ("LOCAL_RANK" in os.environ and dist.get_rank() > 0):
-        # 通过判断 rank>0 ，以防止非 rank-0 零的主进程重复转储配置导致冲突
         dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
         dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
 
     if args_cli.cprofile:
         import cProfile
-
         cprofile = cProfile.Profile()
-        print(
-            "cProfile 性能分析已启用。程序完成运行后，会自动在日志目录下保存为以 .profile 结尾的日志文件。"
-        )
+        print("cProfile 性能分析已启用。")
         cprofile.enable()
-    # import pdb; pdb.set_trace()
+
     print("4")
-    print("按s")
-    # 开始执行主训练环节
-    runner.learn(
-        num_learning_iterations=agent_cfg.max_iterations,
-        init_at_random_ep_len=getattr(agent_cfg, "init_at_random_ep_len", False),
-    )
-    # import pdb; pdb.set_trace()
+    # ---- 阶段1: 平地训练 ----
+    if stage2_at > 0 and not is_resuming:
+        print(f"[两阶段] 阶段1: 开始 {stage2_at} 轮平地训练...")
+        runner.learn(
+            num_learning_iterations=stage2_at,
+            init_at_random_ep_len=getattr(agent_cfg, "init_at_random_ep_len", False),
+        )
+        # 保存阶段1 checkpoint
+        stage1_ckpt = os.path.join(log_dir, f"model_flat_stage_{stage2_at}.pt")
+        runner.save(stage1_ckpt)
+        print(f"[两阶段] 阶段1 完成! 保存 checkpoint: {stage1_ckpt}")
+        env.close()
+        stage1_completed = True
+
+        # ---- 阶段2: 全地形 ----
+        print(f"[两阶段] 阶段2: 切换到全地形训练，继续 {agent_cfg.max_iterations - stage2_at} 轮")
+        env_cfg.scene.terrain.terrain_generator.sub_terrains = saved_sub_terrains
+        env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+        if isinstance(env.unwrapped, DirectMARLEnv):
+            env = multi_agent_to_single_agent(env)
+        env = InstinctRlVecEnvWrapper(env)
+        runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+        runner.load(stage1_ckpt)
+        if not ("LOCAL_RANK" in os.environ and dist.get_rank() > 0):
+            dump_yaml(os.path.join(log_dir, "params", "env_stage2.yaml"), env_cfg)
+        runner.learn(
+            num_learning_iterations=agent_cfg.max_iterations - stage2_at,
+            init_at_random_ep_len=getattr(agent_cfg, "init_at_random_ep_len", False),
+        )
+    else:
+        # ---- 单阶段 (全地形或恢复) ----
+        runner.learn(
+            num_learning_iterations=agent_cfg.max_iterations,
+            init_at_random_ep_len=getattr(agent_cfg, "init_at_random_ep_len", False),
+        )
+
     print("5")
+    print("迭代完成")
     print("迭代")
     if args_cli.cprofile:
         cprofile.disable()

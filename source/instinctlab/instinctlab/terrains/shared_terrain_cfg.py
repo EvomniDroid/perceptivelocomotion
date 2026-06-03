@@ -8,6 +8,7 @@ from isaaclab.terrains import FlatPatchSamplingCfg
 from instinctlab.terrains.terrain_generator_cfg import FiledTerrainGeneratorCfg
 from instinctlab.terrains.terrain_generator import FiledTerrainGenerator
 from instinctlab.terrains import (
+    AtecDPitAndPlatformTerrainCfg,
     PerlinBowlPitTerrainCfg,
     PerlinPitTerrainCfg,
     PerlinPlaneTerrainCfg,
@@ -526,6 +527,57 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
 
+    "atec_d": AtecDPitAndPlatformTerrainCfg(
+        proportion=0.10,
+        border_width=1.0,
+        pit_depth=1.0,
+        pit_width_range=(1.3, 1.4),
+        box_size=(0.8, 1.0, 0.6),
+        box_pos=(3.0, 5.6),
+    ),
+})
+
+
+# ====================================================================
+# FLAT_TRAINING_SUB_TERRAINS - 仅平地的训练地形（阶段1）
+# 用于两阶段训练：先让机器人在平地上学会走路，再引入复杂地形
+# ====================================================================
+
+FLAT_TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
+    "perlin_rough": PerlinPlaneTerrainCfg(
+        proportion=0.50,
+        noise_scale=[0.0, 0.02],
+        noise_frequency=20,
+        fractal_octaves=2,
+        fractal_lacunarity=2.0,
+        fractal_gain=0.25,
+        centering=True,
+        wall_prob=[0.0, 0.0, 0.0, 0.0],
+        wall_height=5.0,
+        wall_thickness=0.05,
+        flat_patch_sampling={
+            "target": FlatPatchSamplingCfg(
+                num_patches=10, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.1
+            ),
+        },
+    ),
+    "perlin_rough_stand": PerlinPlaneTerrainCfg(
+        proportion=0.50,
+        noise_scale=[0.0, 0.02],
+        noise_frequency=20,
+        fractal_octaves=2,
+        fractal_lacunarity=2.0,
+        fractal_gain=0.25,
+        centering=True,
+        wall_prob=[0.0, 0.0, 0.0, 0.0],
+        wall_height=5.0,
+        wall_thickness=0.05,
+        flat_patch_sampling={
+            "target": FlatPatchSamplingCfg(
+                num_patches=10, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.1
+            ),
+        },
+    ),
 })
 
 
@@ -714,7 +766,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
     "pyramid_stairs": PerlinPyramidStairsTerrainCfg(
-        proportion=0.15,
+        proportion=0.18,
         step_height_range=(0.05, 0.23),
         step_width=0.3,
         platform_width=1.5,
@@ -741,8 +793,8 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
     "pyramid_stairs_high": PerlinPyramidStairsTerrainCfg(
-        proportion=0.10,
-        step_height_range=(0.05, 0.45),
+        proportion=0.04,
+        step_height_range=(0.05, 0.32),
         step_width=1.5,
         platform_width=4.0,
         border_width=0.3,
@@ -768,7 +820,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
     "pyramid_stairs_inv": PerlinInvertedPyramidStairsTerrainCfg(
-        proportion=0.15,
+        proportion=0.18,
         step_height_range=(0.05, 0.23),
         step_width=0.3,
         platform_width=1.5,
@@ -795,8 +847,8 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
     "pyramid_stairs_inv_high": PerlinInvertedPyramidStairsTerrainCfg(
-        proportion=0.10,
-        step_height_range=(0.05, 0.45),
+        proportion=0.04,
+        step_height_range=(0.05, 0.32),
         step_width=1.5,
         platform_width=4.0,
         border_width=0.3,
@@ -906,7 +958,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
     "raised_mound": PerlinBowlPitTerrainCfg(
         proportion=0.10,
         pit_depth=(0.05, 1.0),
-        pit_radius=(1.5, 1.5),
+        pit_radius=(1.0, 1.0),
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
         wall_thickness=0.05,
@@ -923,13 +975,15 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
                 num_patches=10,
                 patch_radius=[0.05, 0.10, 0.15, 0.20],
                 max_height_diff=0.1,
+                x_range=(3.7, 3.7),
+                y_range=(-0.0, 0.0),
             ),
         },
     ),
     "pit_crater": PerlinPitTerrainCfg(
         proportion=0.10,
         pit_depth=(0.05, 1.0),
-        pit_radius=(1.5, 1.5),
+        pit_radius=(1.0, 1.0),
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
         wall_thickness=0.05,
@@ -946,13 +1000,15 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
                 num_patches=10,
                 patch_radius=[0.05, 0.10, 0.15, 0.20],
                 max_height_diff=0.1,
+                x_range=(3.7, 3.7),
+                y_range=(-0.0, 0.0),
             ),
         },
     ),
     "raised_mound": PerlinBowlPitTerrainCfg(
         proportion=0.10,
         pit_depth=(0.05, 1.0),
-        pit_radius=(1.5, 1.5),
+        pit_radius=(1.0, 1.0),
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
         wall_thickness=0.05,
@@ -969,13 +1025,15 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
                 num_patches=10,
                 patch_radius=[0.05, 0.10, 0.15, 0.20],
                 max_height_diff=0.1,
+                x_range=(3.7, 3.7),
+                y_range=(-0.0, 0.0),
             ),
         },
     ),
     "pit_crater": PerlinPitTerrainCfg(
         proportion=0.10,
         pit_depth=(0.05, 1.0),
-        pit_radius=(1.5, 1.5),
+        pit_radius=(1.0, 1.0),
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
         wall_thickness=0.05,
@@ -992,6 +1050,8 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
                 num_patches=10,
                 patch_radius=[0.05, 0.10, 0.15, 0.20],
                 max_height_diff=0.1,
+                x_range=(3.7, 3.7),
+                y_range=(-0.0, 0.0),
             ),
         },
     ),
@@ -1027,3 +1087,38 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         ),
     ),
 })
+
+
+# ====================================================================
+# ATEC_D_TERRAIN_CFG - 用于测试 ATEC D 赛题地形 (坑+平台)
+# 特点：
+#   - 仅 1 格地形, 使用 atec_d 坑+平台地形
+#   - 用于部署测试，验证机器人是否能跳过坑或走上高平台
+# ====================================================================
+
+ATEC_D_TERRAIN_CFG = FiledTerrainGeneratorCfg(
+    class_type=FiledTerrainGenerator,
+    seed=42,
+    size=(12.0, 8.0),
+    border_width=0.0,
+    num_rows=1,
+    num_cols=1,
+    horizontal_scale=0.05,
+    vertical_scale=0.005,
+    slope_threshold=1.0,
+    use_cache=False,
+    curriculum=False,
+    terrain_layout=["atec_d"],
+    sub_terrains=_terrain_layout_to_ordered_dict(["atec_d"], expected_count=1),
+)
+
+for name, cfg in ATEC_D_TERRAIN_CFG.sub_terrains.items():
+    cfg.flat_patch_sampling = {
+        "target": FlatPatchSamplingCfg(
+            num_patches=1,
+            patch_radius=[0.05],
+            max_height_diff=10.0,
+            x_range=(0.0, 3.0),
+            y_range=(3.0, 5.0),
+        ),
+    }

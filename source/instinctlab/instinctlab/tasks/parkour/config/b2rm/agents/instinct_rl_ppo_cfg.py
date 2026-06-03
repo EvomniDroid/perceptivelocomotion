@@ -30,7 +30,7 @@ class EncoderConfigs:
 
 @configclass
 class MoEPolicyCfg(InstinctRlEncoderMoEActorCriticCfg):
-    init_noise_std = 1.0
+    init_noise_std = 0.4
     num_moe_experts = 4
     actor_hidden_dims = [256, 128, 64]
     critic_hidden_dims = [256, 128, 64]
@@ -45,20 +45,20 @@ class B2RMPPOAlgorithmCfg(InstinctRlPpoAlgorithmCfg):
     value_loss_coef = 0.5
     use_clipped_value_loss = True
     clip_param = 0.2
-    entropy_coef = 0.006
-    num_learning_epochs = 5
-    num_mini_batches = 4
-    learning_rate = 1.0e-4
+    entropy_coef = 0.003
+    num_learning_epochs = 3
+    num_mini_batches = 8
+    learning_rate = 7.5e-5
     schedule = "adaptive"
-    gamma = 0.99
-    lam = 0.95
-    desired_kl = 0.01
+    gamma = 0.995
+    lam = 0.97
+    desired_kl = 0.008
     max_grad_norm = 0.5
 
 
 @configclass
 class B2RMParkourPPORunnerCfg(InstinctRlOnPolicyRunnerCfg):
-    num_steps_per_env = 24
+    num_steps_per_env = 32
     max_iterations = 30000
     save_interval = 1000
     experiment_name = "b2rm_parkour"

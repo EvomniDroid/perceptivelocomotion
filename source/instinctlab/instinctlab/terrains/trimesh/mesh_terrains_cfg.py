@@ -104,3 +104,28 @@ class PerlinMeshRandomMultiBoxTerrainCfg(SubTerrainBaseCfg, WallTerrainCfgMixin)
     no_perlin_at_obstacle: bool = False
     box_perlin_cfg: PerlinPlaneTerrainCfg | None = None
     """Used only when perlin_cfg is not None"""
+
+
+@configclass
+class AtecDPitAndPlatformTerrainCfg(SubTerrainBaseCfg):
+    """Configuration for a terrain with a pit and a movable box.
+
+    This terrain creates a deep pit (1m) with vertical walls in the center,
+    and a box (0.6m height) on the ground that creates a 40cm step relative
+    to the pit depth. The robot can push the box to help cross the pit.
+
+    Attributes:
+        border_width: Width of the border around the terrain (in m).
+        pit_depth: Fixed depth of the pit (in m).
+        pit_width_range: Minimum and maximum width of the pit (in m).
+        box_size: Size of the box as (width_x, width_y, height_z) in meters.
+        box_pos: World (x, y) position of the box center on the ground.
+    """
+
+    function = mesh_terrains.atec_d_pit_platform_terrain
+
+    border_width: float = 1.0
+    pit_depth: float = 1.0
+    pit_width_range: tuple[float, float] = (1.3, 1.4)
+    box_size: tuple[float, float, float] = (0.8, 1.0, 0.6)
+    box_pos: tuple[float, float] = (3.0, 5.6)

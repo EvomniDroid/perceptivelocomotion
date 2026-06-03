@@ -10,6 +10,7 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
+from isaaclab.managers import EventTermCfg as EventTerm
 from instinctlab.managers import MultiRewardCfg
 from instinctlab.tasks.parkour.config.parkour_env_cfg import CurriculumCfg
 from isaaclab.scene import InteractiveSceneCfg
@@ -45,6 +46,15 @@ from instinctlab.utils.noise import (
 )
 
 __file_dir__ = os.path.dirname(os.path.realpath(__file__))
+
+ARM_FOLDED_OFFSET = {
+    "arm_joint_1": 0.0,
+    "arm_joint_2": 1.5707963267948966,
+    "arm_joint_3": -3.036872898470133,
+    "arm_joint_4": 0.0,
+    "arm_joint_5": -0.15707963267948966,
+    "arm_joint_6": 0.017453292519943295,
+}
 
 ROUGH_TERRAINS_CFG = FiledTerrainGeneratorCfg(
     class_type=FiledTerrainGenerator,
@@ -175,8 +185,8 @@ class B2RMSceneCfg(InteractiveSceneCfg):
 class B2RMRewardsCfg:
     track_lin_vel_xy_exp = RewTerm(
         func=mdp.track_lin_vel_xy_exp,
-        weight=2.0,
-        params={"command_name": "base_velocity", "std": 0.5},
+        weight=4.0,
+        params={"command_name": "base_velocity", "std": 0.35},
     )
     track_ang_vel_z_exp = RewTerm(
         func=mdp.track_ang_vel_z_exp,
@@ -185,23 +195,23 @@ class B2RMRewardsCfg:
     )
     heading_error = RewTerm(
         func=mdp.heading_error,
-        weight=-1.0,
+        weight=-0.4,
         params={"command_name": "base_velocity"},
     )
     dont_wait = RewTerm(
         func=mdp.dont_wait,
-        weight=-0.5,
+        weight=-5.0,
         params={"command_name": "base_velocity"},
     )
-    is_alive = RewTerm(func=mdp.is_alive, weight=3.0)
+    is_alive = RewTerm(func=mdp.is_alive, weight=2.0)
     stand_still = RewTerm(
         func=mdp.stand_still,
-        weight=-0.3,
+        weight=0.0,
         params={"command_name": "base_velocity", "offset": 4.0},
     )
     volume_points_penetration = RewTerm(
         func=mdp.volume_points_penetration,
-        weight=-4.0,
+        weight=-2.8,
         params={
             "sensor_cfg": SceneEntityCfg(
                 name="leg_volume_points",
@@ -220,7 +230,7 @@ class B2RMRewardsCfg:
     )
     feet_slide = RewTerm(
         func=mdp.contact_slide,
-        weight=-0.4,
+        weight=-0.5,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
             "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
@@ -229,23 +239,16 @@ class B2RMRewardsCfg:
     )
     feet_close_xy_gauss = RewTerm(
         func=mdp.feet_close_xy_gauss,
-        weight=-0.5,
+        weight=0.0,
         params={
             "threshold": 0.25,
             "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
             "std": 0.05,
         },
     )
-    joint_deviation_hip = RewTerm(
-        func=mdp.joint_deviation_square,
-        weight=-0.5,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_joint"])
-        },
-    )
     joint_deviation_arm = RewTerm(
         func=mdp.joint_deviation_square,
-        weight=-2.0,
+        weight=-1.5,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
@@ -255,6 +258,7 @@ class B2RMRewardsCfg:
         },
     )
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.02)
+    lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
     dof_torques_l2 = RewTerm(
         func=mdp.joint_torques_l2,
         weight=-1.5e-07,
@@ -268,15 +272,39 @@ class B2RMRewardsCfg:
     dof_acc_l2 = RewTerm(
         func=mdp.joint_acc_l2,
         weight=-1.25e-07,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=["arm_.*", ".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"])},
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot", joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"]
+            )
+        },
     )
     dof_vel_l2 = RewTerm(
         func=mdp.joint_vel_l2,
         weight=-0.0001,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*"])},
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot", joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"]
+            )
+        },
     )
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.005)
-    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-0.2)
+    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-2.5)
+    base_pitch_l2 = RewTerm(func=mdp.base_pitch_l2, weight=-2.0)
+    base_height = RewTerm(
+        func=mdp.base_height_l2,
+        weight=-8.0,
+        params={"target_height": 0.55},
+    )
+    joint_deviation_legs = RewTerm(
+        func=mdp.joint_deviation_l1,
+        weight=-0.3,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
+            )
+        },
+    )
 
 
 @configclass
@@ -347,28 +375,29 @@ class B2RMCommandsCfg:
         debug_vis=False,
         velocity_control_stiffness=2.0,
         heading_control_stiffness=2.0,
-        rel_standing_envs=0.05,
+        only_positive_lin_vel_x=True,
+        rel_standing_envs=0.0,
         ranges=mdp.PoseVelocityCommandCfg.Ranges(
-            lin_vel_x=(0.0, 0.0),
+            lin_vel_x=(0.2, 0.8),
             lin_vel_y=(0.0, 0.0),
-            ang_vel_z=(-1.0, 1.0)
+            ang_vel_z=(-0.8, 0.8)
         ),
-        random_velocity_terrain=["perlin_rough_stand"],
+        random_velocity_terrain=[],
         velocity_ranges={
-            "perlin_rough": {"lin_vel_x": (0.45, 1.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
+            "perlin_rough": {"lin_vel_x": (0.2, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.4, 0.4)},
             "perlin_rough_stand": {"lin_vel_x": (0.0, 0.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (0.0, 0.0)},
-            "square_gaps": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            "pyramid_stairs": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            "pyramid_stairs_high": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            "pyramid_stairs_inv": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            "pyramid_stairs_inv_high": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            "boxes": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            "mesh_boxes": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            "hf_pyramid_slope_inv": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            "raised_mound": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            "pit_crater": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            "wave": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
-            "circle_track": {"lin_vel_x": (0.0, 0.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.5, 1.5)},
+            "square_gaps": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.5, 0.5)},
+            "pyramid_stairs": {"lin_vel_x": (0.35, 0.70), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.08, 0.08)},
+            "pyramid_stairs_high": {"lin_vel_x": (0.30, 0.60), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.06, 0.06)},
+            "pyramid_stairs_inv": {"lin_vel_x": (0.35, 0.70), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.08, 0.08)},
+            "pyramid_stairs_inv_high": {"lin_vel_x": (0.30, 0.60), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.06, 0.06)},
+            "boxes": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.6, 0.6)},
+            "mesh_boxes": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.6, 0.6)},
+            "hf_pyramid_slope_inv": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.5, 0.5)},
+            "raised_mound": {"lin_vel_x": (0.55, 0.9), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.15, 0.15)},
+            "pit_crater": {"lin_vel_x": (0.55, 0.9), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.15, 0.15)},
+            "wave": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.6, 0.6)},
+            "circle_track": {"lin_vel_x": (0.0, 0.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
         },
     )
 
@@ -377,6 +406,7 @@ class B2RMCommandsCfg:
 class B2RMTerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     terrain_out_bound = DoneTerm(func=mdp.terrain_out_of_bounds, time_out=True, params={"distance_buffer": 2.0})
+    root_height = DoneTerm(func=mdp.root_height_below_env_origin_minimum, params={"minimum_height": 0.25})
     base_contact = DoneTerm(
         func=mdp.illegal_contact,
         params={
@@ -384,7 +414,36 @@ class B2RMTerminationsCfg:
             "threshold": 1.0,
         },
     )
-    bad_orientation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 1.0})
+    leg_link_contact = DoneTerm(
+        func=mdp.illegal_contact,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=[".*_thigh"]),
+            "threshold": 15.0,
+        },
+    )
+    # calf_link_contact 实质就是"膝关节触地"检测：
+    # 物理引擎只在 rigid body (link) 层面追踪接触力，calf_joint 本身没有碰撞体。
+    # calf 顶端（靠近 thigh 一侧）就是"膝盖"位置，所以 calf_link 触地 = 膝盖触地。
+    # 阈值 50N：正常走路时 calf 力 < 10N，跌倒时 calf 砸地 > 50N。
+    calf_link_contact = DoneTerm(
+        func=mdp.illegal_contact,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=[".*_calf"]),
+            "threshold": 50.0,
+        },
+    )
+    # base_link_illegal_contact 同样关闭：阈值 1N 极严，平地训练时可能因 pose 微小偏差误杀。
+    # base_link_illegal_contact = DoneTerm(
+    #     func=mdp.illegal_contact,
+    #     params={
+    #         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["base_link"]),
+    #         "threshold": 1.0,
+    #     },
+    # )
+    bad_orientation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 1.3})
+    # bad_pitch 暂时注释：因为 calf/foot/base 触地 termination 已经能在机器人跌倒时立即 reset，
+    # bad_pitch 会让策略在学习"低头"时过早终止，反而拖慢收敛。
+    # bad_pitch = DoneTerm(func=mdp.bad_pitch, params={"max_pitch": 0.35})
 
 
 @configclass
@@ -394,14 +453,69 @@ class B2RMRewardsCfgFinal(MultiRewardCfg):
 
 @configclass
 class B2RMActionsCfg:
-    joint_pos = instinct_mdp.JointPositionActionCfg(
-        asset_name="robot", joint_names=[".*"], scale=0.5, use_default_offset=True
+    # Keep locomotion authority on legs.
+    leg_joint_pos = instinct_mdp.JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
+        scale=0.4,
+        use_default_offset=True,
+    )
+    # Keep arm in action space for tracking, but tightly around folded pose.
+    arm_joint_pos = instinct_mdp.JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=["arm_joint_1", "arm_joint_2", "arm_joint_3", "arm_joint_4", "arm_joint_5", "arm_joint_6"],
+        scale=0.05,
+        offset=ARM_FOLDED_OFFSET,
+        use_default_offset=False,
     )
 
 
 @configclass
 class B2RMMonitorsCfg:
     pass
+
+
+@configclass
+class B2RMEventsCfg:
+    # Keep mild base randomization at reset.
+    reset_base = EventTerm(
+        func=mdp.reset_root_state_uniform,
+        mode="reset",
+        params={
+            "pose_range": {"x": (-0.1, 0.1), "y": (-0.1, 0.1), "yaw": (-0.1, 0.1)},
+            "velocity_range": {
+                "x": (-0.2, 0.2),
+                "y": (-0.2, 0.2),
+                "z": (-0.2, 0.2),
+                "roll": (-0.2, 0.2),
+                "pitch": (-0.2, 0.2),
+                "yaw": (-0.2, 0.2),
+            },
+        },
+    )
+
+    # Randomize only leg joints; keep arm out of random reset.
+    reset_leg_joints = EventTerm(
+        func=mdp.reset_joints_by_offset,
+        mode="reset",
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot", joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"]
+            ),
+            "position_range": (-0.05, 0.05),
+            "velocity_range": (0.0, 0.0),
+        },
+    )
+
+    # Force arm to default folded pose on every reset.
+    reset_arm_joints_folded = EventTerm(
+        func=mdp.reset_joints_to_targets,
+        mode="reset",
+        params={
+            "joint_pos_targets": ARM_FOLDED_OFFSET,
+            "joint_vel_target": 0.0,
+        },
+    )
 
 
 @configclass
@@ -413,6 +527,7 @@ class B2RMParkourEnvCfg(ManagerBasedRLEnvCfg):
     rewards: B2RMRewardsCfgFinal = B2RMRewardsCfgFinal()
     terminations: B2RMTerminationsCfg = B2RMTerminationsCfg()
     monitors: B2RMMonitorsCfg = B2RMMonitorsCfg()
+    events: B2RMEventsCfg = B2RMEventsCfg()
     curriculum: CurriculumCfg = CurriculumCfg()
 
     def __post_init__(self):
@@ -454,8 +569,14 @@ class B2RMParkourEnvCfg_PLAY(B2RMParkourEnvCfg):
         self.scene.env_spacing = 2.5
         self.episode_length_s = 10
         self.terminations.base_height = None
+        self.terminations.base_contact = None
         if self.scene.terrain.terrain_generator is not None:
             self.scene.terrain.terrain_generator.num_rows = 4
             self.scene.terrain.terrain_generator.num_cols = 10
 
         self.commands.base_velocity.debug_vis = True
+        self.commands.base_velocity.ranges = mdp.PoseVelocityCommandCfg.Ranges(
+            lin_vel_x=(0.0, 0.0),
+            lin_vel_y=(0.0, 0.0),
+            ang_vel_z=(-0.5, 0.5)
+        )

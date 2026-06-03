@@ -9,6 +9,7 @@ import yaml
 from typing import TYPE_CHECKING
 
 from isaaclab.terrains.height_field.utils import convert_height_field_to_mesh
+from isaaclab.terrains.trimesh.utils import make_border
 
 from ..height_field.hf_terrains import generate_perlin_noise
 from .utils import crop_terrain_mesh_aabb, generate_wall
@@ -329,4 +330,55 @@ def random_multi_box_terrain(
 
     origin = np.array([0.5 * cfg.size[0], 0.5 * cfg.size[1], 0.0])
 
+    return mesh_list, origin
+
+
+def atec_d_pit_platform_terrain(
+    difficulty: float, cfg: mesh_terrains_cfg.AtecDPitAndPlatformTerrainCfg
+) -> tuple[list[trimesh.Trimesh], np.ndarray]:
+    """Generate a terrain with a pit and a movable box.
+
+    The terrain contains a deep pit (1m) with vertical walls in the center, and a fixed
+    box (0.6m height) on the ground that creates a 40cm step relative to the pit depth.
+    The robot can push the box to help cross the pit.
+
+    Args:
+        difficulty: Difficulty parameter in [0, 1].
+        cfg: Configuration for the terrain.
+
+    Returns:
+        A tuple of (list of trimesh meshes, origin position).
+    """
+    pit_depth = cfg.pit_depth
+    pit_width = cfg.pit_width_range[0] + difficulty * (cfg.pit_width_range[1] - cfg.pit_width_range[0])
+
+    mesh_list = []
+
+    pit_walls = make_border(
+        size=(cfg.size[0], cfg.size[1] - cfg.border_width),
+        inner_size=(pit_width, cfg.size[1] - cfg.border_width - 0.2),
+        height=pit_depth,
+        position=(cfg.size[0] / 2, cfg.size[1] / 2, -pit_depth / 2),
+    )
+    mesh_list.extend(pit_walls)
+
+    pit_bottom = trimesh.creation.box(
+        extents=(pit_width, cfg.size[1] - cfg.border_width, 0.2),
+        transform=trimesh.transformations.translation_matrix(
+            (cfg.size[0] / 2, cfg.size[1] / 2, -pit_depth - 0.1)
+        ),
+    )
+    mesh_list.append(pit_bottom)
+
+    box_size = cfg.box_size
+    box_pos = cfg.box_pos
+    box = trimesh.creation.box(
+        extents=(box_size[0], box_size[1], box_size[2]),
+        transform=trimesh.transformations.translation_matrix(
+            (box_pos[0], box_pos[1], box_size[2] / 2)
+        ),
+    )
+    mesh_list.append(box)
+
+    origin = np.array([cfg.size[0] * 0.15, cfg.size[1] / 2, 0.0])
     return mesh_list, origin

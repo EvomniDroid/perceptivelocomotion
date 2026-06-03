@@ -5,9 +5,10 @@ from typing import TYPE_CHECKING
 
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import ContactSensor
-from isaaclab.utils.math import quat_apply_inverse
+from isaaclab.utils.math import euler_xyz_from_quat, quat_apply_inverse
 
 if TYPE_CHECKING:
+    from isaaclab.assets import Articulation
     from isaaclab.envs import ManagerBasedRLEnv
 
 
@@ -21,14 +22,12 @@ def feet_air_time(env, command_name: str, vel_threshold: float, sensor_cfg: Scen
     air_time = contact_sensor.data.current_air_time[:, sensor_cfg.body_ids]
     # 获取指定刚体当前的触地时间
     contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
-    # 判断是否处于接触（触地）状态
+    # 兼容四足：奖励摆动腿的腾空时间，避免双足任务中的“单脚支撑”假设导致奖励几乎恒为0。
     in_contact = contact_time > 0.0
-    # 获取当前状态持续的时间：如果接触则返回接触时间，否则返回腾空时间
-    in_mode_time = torch.where(in_contact, contact_time, air_time)
-    # 判断是否为单腿站立状态
-    single_stance = torch.sum(in_contact.int(), dim=1) == 1
-    # 如果是单脚站立则取对应的时间，否则取0，然后再沿着脚的维度取最小值
-    reward = torch.min(torch.where(single_stance.unsqueeze(-1), in_mode_time, 0.0), dim=1)[0]
+    swing_air_time = torch.where(in_contact, torch.zeros_like(air_time), air_time)
+    num_contact = torch.sum(in_contact.int(), dim=1)
+    has_swing = torch.logical_and(num_contact > 0, num_contact < in_contact.shape[1])
+    reward = torch.mean(swing_air_time, dim=1) * has_swing.float()
     # 针对零指令的情况不给奖励
     reward *= torch.logical_or(
         torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > vel_threshold,
@@ -116,8 +115,8 @@ def dont_wait(
     lin_vel_cmd_x = env.command_manager.get_command(command_name)[:, 0]
     # 获取机器人机身 x 轴 的实际前进速度
     lin_vel_x = asset.data.root_lin_vel_b[:, 0]
-    # 如果指令 > 0.3，而实际速度过低则惩罚
-    return (lin_vel_cmd_x > 0.3) * ((lin_vel_x < 0.15).float() + (lin_vel_x < 0).float() + (lin_vel_x < -0.15).float())
+    # 如果指令 > 0.2，而实际速度过低则惩罚
+    return (lin_vel_cmd_x > 0.2) * ((lin_vel_x < 0.2).float() + (lin_vel_x < 0).float() + (lin_vel_x < -0.15).float())
 
 
 def feet_orientation_contact(
@@ -198,5 +197,22 @@ def link_orientation(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEn
 
     # 惩罚项计算
     return torch.sum(torch.square(link_projected_gravity[:, :2]), dim=1)
+
+
+def base_pitch_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """惩罚 base_link 的 pitch 后仰角（绕 y 轴），前倾不惩罚。
+
+    IsaacLab 约定：x=前进, y=左, z=上。绕 y 轴旋转得到 pitch：
+      - pitch > 0 → 后仰（nose 抬起）
+      - pitch < 0 → 前倾（nose 低下）
+
+    返回的 L2 惩罚只对 pitch > 0 部分生效，前倾给 0 奖励避免上坡时被误伤。
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    quat_w = asset.data.root_quat_w
+    _, pitch, _ = euler_xyz_from_quat(quat_w)
+    # 只惩罚后仰：clip 到 [0, +inf)
+    pitch_pos = torch.clamp(pitch, min=0.0)
+    return torch.square(pitch_pos)
 
 
