@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import math
 import torch
 from typing import TYPE_CHECKING
 
-from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import SceneEntityCfg, ManagerTermBase, RewardTermCfg
 from isaaclab.sensors import ContactSensor
-from isaaclab.utils.math import euler_xyz_from_quat, quat_apply_inverse
+from isaaclab.utils.math import euler_xyz_from_quat, quat_apply_inverse, quat_from_euler_xyz, quat_mul, normalize
 
 if TYPE_CHECKING:
-    from isaaclab.assets import Articulation
+    from isaaclab.assets import Articulation, RigidObject
     from isaaclab.envs import ManagerBasedRLEnv
 
 
@@ -98,11 +99,21 @@ def feet_close_xy_gauss(
     return torch.exp(-torch.clamp(threshold - feet_distance_y, min=0.0) / std**2) - 1
 
 
-def heading_error(env: ManagerBasedRLEnv, command_name: str) -> torch.Tensor:
-    """计算机器人当前航向和目标航向的误差。"""
-    # 计算偏航指令的绝对值
-    ang_vel_cmd = torch.abs(env.command_manager.get_command(command_name)[:, 2])
-    return ang_vel_cmd
+def heading_error(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """惩罚机器人在 yaw 方向上的实际角速度与指令之间的误差。
+    
+    当命令 ω_z=0 时，机器人实际还在转就要扣分。
+    当命令 ω_z≠0 时，惩罚跟踪误差。
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    cmd = env.command_manager.get_command(command_name)
+    actual_wz = asset.data.root_ang_vel_b[:, 2]
+    error = torch.abs(actual_wz - cmd[:, 2])
+    return error
 
 
 def dont_wait(
@@ -117,6 +128,23 @@ def dont_wait(
     lin_vel_x = asset.data.root_lin_vel_b[:, 0]
     # 如果指令 > 0.2，而实际速度过低则惩罚
     return (lin_vel_cmd_x > 0.2) * ((lin_vel_x < 0.2).float() + (lin_vel_x < 0).float() + (lin_vel_x < -0.15).float())
+
+
+def must_turn(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    cmd_threshold: float = 0.2,
+    min_turn_rate: float = 0.15,
+) -> torch.Tensor:
+    """当存在明确 yaw 指令时，惩罚机器人没有朝正确方向开始转动。"""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    yaw_cmd = env.command_manager.get_command(command_name)[:, 2]
+    actual_wz = asset.data.root_ang_vel_b[:, 2]
+
+    signed_turn_rate = torch.sign(yaw_cmd) * actual_wz
+    penalty = torch.clamp(min_turn_rate - signed_turn_rate, min=0.0) / max(min_turn_rate, 1.0e-6)
+    return (torch.abs(yaw_cmd) > cmd_threshold).float() * penalty
 
 
 def feet_orientation_contact(
@@ -214,5 +242,305 @@ def base_pitch_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntit
     # 只惩罚后仰：clip 到 [0, +inf)
     pitch_pos = torch.clamp(pitch, min=0.0)
     return torch.square(pitch_pos)
+
+
+def roll_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """惩罚 roll 角度（绕 x 轴），使用绝对值惩罚。
+
+    对应 HYT 的 roll = -2.0: rew = |roll|。
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    quat_w = asset.data.root_quat_w
+    roll, _, _ = euler_xyz_from_quat(quat_w)
+    return torch.abs(roll)
+
+
+def feet_height(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+    target_height: float = 0.3,
+    vel_threshold: float = 0.15,
+) -> torch.Tensor:
+    """奖励摆动脚抬到目标高度。
+
+    对应 HYT 的 feet_height = +1.0, feet_height_target = 0.3m。
+    只在脚离地（摆动相）时计算，目标高度 0.3m，使用高斯型奖励。
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    in_contact = contact_time > 0.0
+
+    # 脚的世界 z 坐标 - 地面高度 (用 base z 做近似)
+    foot_z = asset.data.body_pos_w[:, asset_cfg.body_ids, 2]
+    # 地面高度近似 = base_z - base_height_target
+    base_z = asset.data.root_pos_w[:, 2].unsqueeze(1)
+    foot_height_rel = foot_z - (base_z - 0.4)  # 0.4 ≈ 地面到基座的粗略偏移
+
+    # 摆动相不触地的脚，高度接近 target 就给奖励
+    swing_height = torch.where(in_contact, torch.zeros_like(foot_height_rel), foot_height_rel)
+    reward = torch.exp(-torch.square(swing_height - target_height) / 0.04)  # sigma≈0.2
+    reward = torch.mean(reward, dim=1)
+
+    # 零指令时不奖励
+    has_cmd = torch.logical_or(
+        torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > vel_threshold,
+        torch.abs(env.command_manager.get_command(command_name)[:, 2]) > vel_threshold,
+    )
+    return reward * has_cmd.float()
+
+
+def work_l2(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """惩罚净做功（机械功率）的绝对值。|sum(tau * w)|。
+
+    对应 HYT 的 work = -0.003。
+    跳跃时做功大 → 重罚，步行时做功小 → 轻罚。
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    power = torch.abs(torch.sum(
+        asset.data.applied_torque[:, asset_cfg.joint_ids] * asset.data.joint_vel[:, asset_cfg.joint_ids], dim=1
+    ))
+    return power
+
+
+def delta_torques_l2(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """惩罚力矩变化平方和（力矩抖振）。
+
+    对应 HYT 的 delta_torques = -1.0e-7。
+    需要缓存上一帧的力矩。
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    # 无状态，使用近似：当前步的力矩平方乘以归一化系数
+    # 更好的实现需要缓存，但为了简单先这样
+    torques = asset.data.applied_torque[:, asset_cfg.joint_ids]
+    return torch.sum(torch.square(torques), dim=1) * 1.0
+
+
+class delta_torques(ManagerTermBase):
+    """力矩变化平方和（delta_torques），带缓存。
+
+    对应 HYT 的 delta_torques = -1.0e-7。
+    rew = sum((tau_t - tau_{t-1})^2)
+    """
+
+    def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        asset_cfg = cfg.params.get("asset_cfg", SceneEntityCfg("robot"))
+        self.asset = env.scene[asset_cfg.name]
+        self._last_torques = torch.zeros_like(self.asset.data.applied_torque[:, asset_cfg.joint_ids])
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    ) -> torch.Tensor:
+        curr_torques = self.asset.data.applied_torque[:, asset_cfg.joint_ids]
+        delta = torch.sum(torch.square(curr_torques - self._last_torques), dim=1)
+        self._last_torques[:] = curr_torques
+        return delta
+
+    def reset(self, env_ids):
+        self._last_torques[env_ids] = 0.0
+
+
+def feet_jerk_l2(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+) -> torch.Tensor:
+    """惩罚足端接触力变化率（接触力抖动）。
+
+    对应 HYT 的 feet_jerk = -0.0002。
+    由于需要两帧力数据，我们用力平方近似。
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w_history
+    curr_forces = forces[:, -1, sensor_cfg.body_ids]
+    # 用力的平方近似变化率（无状态版本）
+    return torch.sum(torch.norm(curr_forces, dim=-1), dim=1)
+
+
+class feet_jerk(ManagerTermBase):
+    """足端接触力变化率惩罚，带缓存。
+
+    对应 HYT 的 feet_jerk = -0.0002。
+    rew = sum(|F_t - F_{t-1}|)
+    """
+
+    def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        sensor_cfg = cfg.params.get("sensor_cfg", SceneEntityCfg("contact_forces", body_names=".*_foot"))
+        self.sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+        self._last_forces = torch.zeros(
+            env.num_envs, len(sensor_cfg.body_ids), 3, device=env.device
+        )
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+    ) -> torch.Tensor:
+        forces = self.sensor.data.net_forces_w_history[:, -1, sensor_cfg.body_ids]
+        jerk = torch.sum(torch.norm(forces - self._last_forces, dim=-1), dim=1)
+        self._last_forces[:] = forces
+        return jerk
+
+    def reset(self, env_ids):
+        self._last_forces[env_ids] = 0.0
+
+
+def contact_forces_penalty(
+    env: ManagerBasedRLEnv,
+    threshold: float,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+) -> torch.Tensor:
+    """惩罚超过阈值大小的足端接触力。
+
+    对应 HYT 的 feet_contact_forces = -0.001, max_contact_force=120N(B2RM)。
+    rew = sum(max(0, |F| - threshold))
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w_history[:, -1, sensor_cfg.body_ids]
+    contact_forces_norm = torch.norm(forces, dim=-1)
+    penalty = torch.clamp(contact_forces_norm - threshold, min=0.0)
+    return torch.sum(penalty, dim=1)
+
+
+def tracking_contacts_shaped_force(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+    sigma: float = 0.5,
+    kappa: float = 0.07,
+) -> torch.Tensor:
+    """Diagonal Trot 步态约束：惩罚对角接触力不对称 + 极端同步。
+
+    对应 HYT 的 tracking_contacts_shaped_force = -2.0。
+
+    原 bug：用 episode 时间硬跑 sin² 相位，期望"phase=0 全踩 / phase=0.5 全腾"，
+    4 足 Trot 模式下持续扣分 → 策略被逼学 bounding 跳。
+
+    修复后的语义（HYT 原意）：
+    - 鼓励 **FL+RR vs FR+RL 对角腿接触力平衡**（Diagonal Trot 对称性）
+    - 鼓励 **"总接触力 ≈ 一半"**（避免全离地跳 + 鼓励迈步）
+    - kappa 真正用作 phase EMA 平滑（防止 episode reset 突变）
+
+    期望 contact 信号：diagonal_FL_RR = diagonal_FR_RL
+    期望 force 均值：0.5（B2RM 满力 120N → 期望 60N 单腿均值）
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_forces = contact_sensor.data.net_forces_w_history[:, -1, sensor_cfg.body_ids]
+    contact_norm = torch.norm(contact_forces, dim=-1)  # (batch_size, 4)
+
+    # 归一化到 [0, 1]
+    max_force = 120.0
+    contact_norm = torch.clamp(contact_norm / max_force, 0.0, 1.0)
+
+    # 1) 对角对称性：FL+RR 应等于 FR+RL
+    #    B2RM body_ids 顺序通常是 [FL, FR, RL, RR]
+    diagonal_FL_RR = contact_norm[:, 0] + contact_norm[:, 3]
+    diagonal_FR_RL = contact_norm[:, 1] + contact_norm[:, 2]
+    symmetry_error = (diagonal_FL_RR - diagonal_FR_RL) ** 2
+
+    # 2) 总接触力 ≈ 0.5（防 bounding 跳 + 防全 4 脚 stand）
+    #    行走时 2 脚触地，期望 mean force ≈ 0.5
+    #    sigma 当作容忍带：|mean-0.5| <= sigma 不扣分
+    mean_force = torch.mean(contact_norm, dim=1)
+    mean_dev = torch.abs(mean_force - 0.5) - sigma
+    mean_error = torch.clamp(mean_dev, min=0.0) ** 2
+
+    # kappa 用作 phase EMA 平滑（这里用 contact mean 当 phase proxy，避免 episode 突变）
+    # 当前步 phase 偏离上一步越多 → 越要抑制（防止策略乱跳）
+    if not hasattr(env, "_last_contact_mean"):
+        env._last_contact_mean = torch.zeros_like(mean_force)
+    phase_jitter = (mean_force - env._last_contact_mean) ** 2
+    env._last_contact_mean = (1.0 - kappa) * env._last_contact_mean + kappa * mean_force
+
+    # 总误差
+    error = symmetry_error + mean_error + phase_jitter
+
+    # 没速度命令时（应该 stand）不约束步态相位
+    cmd_vel = env.command_manager.get_command(command_name)
+    has_cmd = torch.logical_or(
+        torch.norm(cmd_vel[:, :2], dim=1) > 0.1,
+        torch.abs(cmd_vel[:, 2]) > 0.1,
+    )
+    return error * has_cmd.float()
+
+
+def tracking_contacts_shaped_vel(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+    sigma: float = 0.5,
+) -> torch.Tensor:
+    """步态相位约束（足端速度形状）。
+
+    对应 HYT 的 tracking_contacts_shaped_vel = -2.0。
+
+    期望：摆动相足端速度快（抬腿），支撑相足端速度慢（接地不动）。
+    足端速度大的脚应该是摆动相，速度小的脚应该是支撑相。
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_forces = contact_sensor.data.net_forces_w_history[:, -1, sensor_cfg.body_ids]
+    is_contact = torch.norm(contact_forces, dim=-1) > 1.0  # (batch_size, 4)
+
+    # 足端速度
+    foot_vel = asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :]  # (batch_size, 4, 3)
+    foot_speed = torch.norm(foot_vel, dim=-1)  # (batch_size, 4)
+
+    # 期望：接触的脚速度=0，不接触的脚速度≥sigma
+    # 惩罚：接触的脚在滑动，或不接触的脚不动（没抬腿）
+    swing_speed = torch.where(is_contact, torch.zeros_like(foot_speed), foot_speed - sigma)
+    swing_penalty = torch.clamp(-swing_speed, min=0.0)  # 摆动腿速度低于sigma → 惩罚
+    stance_speed = torch.where(is_contact, foot_speed, torch.zeros_like(foot_speed))
+    stance_penalty = stance_speed  # 接触腿还在滑动 → 惩罚
+
+    penalty = torch.sum(swing_penalty + stance_penalty, dim=1)
+
+    # 没速度命令时（应该 stand）不惩罚
+    cmd_vel = env.command_manager.get_command(command_name)
+    has_cmd = torch.logical_or(
+        torch.norm(cmd_vel[:, :2], dim=1) > 0.1,
+        torch.abs(cmd_vel[:, 2]) > 0.1,
+    )
+    penalty = penalty * has_cmd.float()
+    return penalty
+
+
+def walking_dof(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    vel_threshold: float = 0.15,
+    sigma: float = 0.05,
+) -> torch.Tensor:
+    """有行走命令时，鼓励关节保持 default 姿态。
+
+    对应 HYT 的 walking_dof = +1.5。
+    rew = exp(-0.05 * sum(|q - q_default|))
+    只在有速度指令时激活。
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    dof_error = torch.sum(torch.abs(
+        asset.data.joint_pos[:, asset_cfg.joint_ids] - asset.data.default_joint_pos[:, asset_cfg.joint_ids]
+    ), dim=1)
+    reward = torch.exp(-sigma * dof_error)
+
+    # 只在有行走命令时激活
+    has_cmd = torch.logical_or(
+        torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > vel_threshold,
+        torch.abs(env.command_manager.get_command(command_name)[:, 2]) > vel_threshold,
+    )
+    return reward * has_cmd.float()
 
 

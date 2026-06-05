@@ -1,0 +1,111 @@
+B2RM 四足训练奖励项清单（HYT对齐版）
+============================================
+
+路径: b2rm_parkour_cfg.py:B2RMRewardsCfg
+初始位置 z: 0.50m  |  base_height target: 0.55m  |  root_height min: 0.25m
+
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+A组 ─ 任务奖励（让机器人"走对"）
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+
+ 1. track_lin_vel_xy_exp    权重: +4.0    奖励  速度跟踪 vx,vy (HYT: +1.0, 调整sigma:0.35→0.25)
+ 2. track_ang_vel_z_exp     权重: +2.0    奖励  角速度跟踪 ωz  (HYT: +0.5)
+ 3. heading_error           权重: -0.4    惩罚  航向偏离
+ 4. dont_wait               权重: -5.0    惩罚  指令给了但不走
+ 5. is_alive                权重: +2.0    奖励  活着 (HYT: +1.0)
+ 6. stand_still             权重: +1.0 ▲  奖励  无指令时保持默认姿态 (HYT: +1.0)  ← 新增启用
+
+
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+B组 ─ 步态质量（让脚"走得对"）
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+
+ 7. volume_points_penetration 权重: -2.8    惩罚  足端穿插地面
+ 8. feet_air_time             权重: +2.0 ▲  奖励  脚离地时间 (HYT: +2.0)  ← 0.5→2.0
+ 9. feet_slide                权重: -0.5    惩罚  脚在地面滑动 (HYT: feet_drag=-0.08)
+10. feet_close_xy_gauss       权重:  0.0    (未启用)
+11. ★ feet_height             权重: +1.0    奖励  摆动脚抬到0.3m高度 (HYT: +1.0, target=0.3)  ← 新增
+12. ★ contact_forces_penalty  权重: -0.001  惩罚  足端力>120N (HYT: -0.001, max=120N)  ← 新增
+13. ★ feet_jerk               权重: -0.0002 惩罚  足端力变化率 (HYT: -0.0002)  ← 新增
+14. ★ tracking_contacts_shaped_force 权重: -2.0  惩罚  接触力步态相位 (HYT: -2.0)  ← 新增
+15. ★ tracking_contacts_shaped_vel   权重: -2.0  惩罚  足端速度步态相位 (HYT: -2.0)  ← 新增
+
+
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+C组 ─ 姿态稳定（让机身"不晃不跳"）
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+
+16. flat_orientation_l2    权重: -2.5    惩罚  roll/pitch 偏离水平
+17. base_pitch_l2          权重: -2.0    惩罚  俯仰后仰 (只惩罚后仰)
+18. base_height            权重: -4.0 ▼  惩罚  高度偏离目标 0.55m (HYT: L1=-4.0)  ← -8.0→-4.0
+19. ang_vel_xy_l2          权重: -0.2 ▲  惩罚  roll/pitch角速度 (HYT: -0.2)  ← 0.02→0.2
+20. lin_vel_z_l2           权重: -1.5    惩罚  垂直线速度 (HYT: -1.5)  ← -2.0→-1.5
+21. ★ roll_l2              权重: -2.0    惩罚  roll角绝对值惩罚 (HYT: -2.0, rew=|roll|)  ← 新增
+
+
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+D组 ─ 能效/平滑（让动作"不抽搐"）
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+
+22. dof_torques_l2         权重: -2.5e-5 ▲ 惩罚  关节力矩 (HYT: -2.5e-5)  ← -1.5e-7→-2.5e-5 (166x!)
+23. dof_acc_l2             权重: -7.5e-7 ▲ 惩罚  关节加速度 (HYT: -7.5e-7)  ← -1.25e-7→-7.5e-7 (6x)
+24. dof_vel_l2             权重: -0.0001   惩罚  关节速度
+25. action_rate_l2         权重: -0.015 ▲ 惩罚  动作变化率 (HYT: -0.015)  ← -0.005→-0.015 (3x)
+26. joint_deviation_legs   权重: -0.3     惩罚  腿关节偏离默认
+27. joint_deviation_arm    权重: -1.5     惩罚  机械臂关节偏离
+28. ★ dof_pos_limits       权重: -1.0    惩罚  关节限位软约束 (HYT: -10.0)  ← 新增
+29. ★ work_l2              权重: -0.003  惩罚  功率绝对值|sum(tau*w)| (HYT: -0.003)  ← 新增
+30. ★ delta_torques        权重: -1.0e-7 惩罚  力矩变化率 (HYT: -1.0e-7)  ← 新增
+31. ★ walking_dof          权重: +1.5    奖励  行走时保持默认姿态 (HYT: +1.5)  ← 新增
+
+
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+终结条件（DoneTerm）
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+
+- time_out              超时（跑满 episodes）
+- terrain_out_bound     出界
+- root_height           机身过低          min=0.25m
+- base_contact          机身触地
+- leg_link_contact      大腿触地          threshold=15N
+- calf_link_contact     小腿触地          threshold=50N
+- bad_orientation       机身姿态过大       limit_angle=1.3rad
+
+
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+权重影响力排名（按绝对值从大到小）★=新增  ▲=加大  ▼=减小
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+
+ 排名  名称                        权重       类别   变化
+ ──────────────────────────────────────────────────────────
+  1   dont_wait                   -5.0       A      
+  2   track_lin_vel_xy_exp        +4.0       A       sigma: 0.35→0.25
+  3   volume_points_penetration   -2.8       B      
+  4   flat_orientation_l2         -2.5       C      
+  5   track_ang_vel_z_exp         +2.0       A      
+  6   is_alive                    +2.0       A      
+  7   base_pitch_l2               -2.0       C      
+  8 ★ roll_l2                     -2.0       C      新增
+  9 ★ tracking_contacts_shaped_force -2.0    B      新增
+ 10 ★ tracking_contacts_shaped_vel   -2.0    B      新增
+ 11   feet_air_time               +2.0 ▲     B      0.5→2.0
+ 12   joint_deviation_arm         -1.5       D      
+ 13 ★ walking_dof                 +1.5       D      新增
+ 14   lin_vel_z_l2                -1.5       C      -2.0→-1.5
+ 15   base_height                 -4.0 ▼     C      -8.0→-4.0(L2→L1)
+ 16 ★ stand_still                 +1.0       A      新增启用(原0.0)
+ 17 ★ feet_height                 +1.0       B      新增
+ 18   dof_pos_limits              -1.0       D      新增
+ 19   ang_vel_xy_l2               -0.2 ▲     C      -0.02→-0.2
+ 20   heading_error               -0.4       A      
+ 21   joint_deviation_legs        -0.3       D      
+ 22   dof_vel_l2                  -0.0001    D      
+ 23   feet_slide                  -0.5       B      
+ 24 ★ work_l2                     -0.003     D      新增
+ 25   action_rate_l2              -0.015 ▲   D      -0.005→-0.015
+ 26   dof_torques_l2              -2.5e-5 ▲  D      -1.5e-7→-2.5e-5(166x!)
+ 27 ★ contact_forces_penalty     -0.001     B      新增
+ 28 ★ feet_jerk                  -0.0002    B      新增
+ 29   dof_acc_l2                  -7.5e-7 ▲  D      -1.25e-7→-7.5e-7(6x)
+ 30 ★ delta_torques              -1.0e-7    D      新增
+ 31   feet_close_xy_gauss         0.0       B      

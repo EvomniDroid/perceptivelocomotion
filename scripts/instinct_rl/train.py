@@ -120,6 +120,17 @@ def auto_affinity():
     print("Affinity auto updated to:", core_mask, "for rank:", rank)
 
 
+def _get_checkpoint_iteration(path: str) -> int:
+    """从 checkpoint 中读取已完成的训练轮数。"""
+    loaded_dict = torch.load(path, map_location="cpu", weights_only=False)
+    return int(loaded_dict.get("iter", 0))
+
+
+def _get_remaining_iterations(current_iteration: int, target_iteration: int) -> int:
+    """将目标总轮数转换成还需要继续训练的增量轮数。"""
+    return max(target_iteration - current_iteration, 0)
+
+
 @hydra_task_config(args_cli.task, "instinct_rl_cfg_entry_point")
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: InstinctRlOnPolicyRunnerCfg):
     """使用 Instinct-RL 智能体进行训练主函数。"""
@@ -190,17 +201,24 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # 判断两阶段训练
     stage2_at = args_cli.stage2_at
     is_resuming = agent_cfg.resume
-    stage1_completed = False
+    resume_iter = 0
+    saved_sub_terrains = env_cfg.scene.terrain.terrain_generator.sub_terrains
 
-    if stage2_at > 0 and not is_resuming:
-        print(f"[两阶段] 阶段1: 仅平地训练 {stage2_at} 轮")
-        saved_sub_terrains = env_cfg.scene.terrain.terrain_generator.sub_terrains
+    if is_resuming:
+        resume_iter = _get_checkpoint_iteration(resume_path)
+        print(f"[恢复] checkpoint 当前轮数: {resume_iter}")
+
+    if stage2_at > 0 and resume_iter < stage2_at:
+        stage1_target_iter = min(stage2_at, agent_cfg.max_iterations)
+        print(f"[两阶段] 阶段1目标轮数: {stage1_target_iter}")
         env_cfg.scene.terrain.terrain_generator.sub_terrains = FLAT_TRAINING_SUB_TERRAINS
+        stage2_mode = True
     else:
+        stage2_mode = False
         if stage2_at <= 0:
             print("[训练] 单阶段模式: 直接使用全地形训练")
         else:
-            print("[训练] 恢复模式: 跳过阶段1")
+            print(f"[训练] 当前 checkpoint 已达到/超过 stage1 目标轮数 {stage2_at}: 直接进入阶段2")
 
     # 创建 isaac 仿真环境
     print("进入环境构造")
@@ -247,21 +265,27 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     print("4")
     # ---- 阶段1: 平地训练 ----
-    if stage2_at > 0 and not is_resuming:
-        print(f"[两阶段] 阶段1: 开始 {stage2_at} 轮平地训练...")
-        runner.learn(
-            num_learning_iterations=stage2_at,
-            init_at_random_ep_len=getattr(agent_cfg, "init_at_random_ep_len", False),
-        )
-        # 保存阶段1 checkpoint
-        stage1_ckpt = os.path.join(log_dir, f"model_flat_stage_{stage2_at}.pt")
-        runner.save(stage1_ckpt)
-        print(f"[两阶段] 阶段1 完成! 保存 checkpoint: {stage1_ckpt}")
+    if stage2_mode:
+        stage1_remaining = _get_remaining_iterations(runner.current_learning_iteration, stage1_target_iter)
+        stage1_ckpt = os.path.join(log_dir, f"model_flat_stage_{stage1_target_iter}.pt")
+
+        if stage1_remaining > 0:
+            print(f"[两阶段] 阶段1: 从第 {runner.current_learning_iteration} 轮继续平地训练 {stage1_remaining} 轮，到 {stage1_target_iter} 轮")
+            runner.learn(
+                num_learning_iterations=stage1_remaining,
+                init_at_random_ep_len=getattr(agent_cfg, "init_at_random_ep_len", False),
+            )
+            runner.save(stage1_ckpt)
+            print(f"[两阶段] 阶段1 完成! 保存 checkpoint: {stage1_ckpt}")
+        else:
+            stage1_ckpt = resume_path if is_resuming else stage1_ckpt
+            print(f"[两阶段] 阶段1已完成，直接使用 checkpoint: {stage1_ckpt}")
+
         env.close()
-        stage1_completed = True
 
         # ---- 阶段2: 全地形 ----
-        print(f"[两阶段] 阶段2: 切换到全地形训练，继续 {agent_cfg.max_iterations - stage2_at} 轮")
+        stage2_remaining = _get_remaining_iterations(stage1_target_iter, agent_cfg.max_iterations)
+        print(f"[两阶段] 阶段2: 切换到全地形训练，目标总轮数 {agent_cfg.max_iterations}，剩余 {stage2_remaining} 轮")
         env_cfg.scene.terrain.terrain_generator.sub_terrains = saved_sub_terrains
         env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
         if isinstance(env.unwrapped, DirectMARLEnv):
@@ -271,16 +295,25 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         runner.load(stage1_ckpt)
         if not ("LOCAL_RANK" in os.environ and dist.get_rank() > 0):
             dump_yaml(os.path.join(log_dir, "params", "env_stage2.yaml"), env_cfg)
-        runner.learn(
-            num_learning_iterations=agent_cfg.max_iterations - stage2_at,
-            init_at_random_ep_len=getattr(agent_cfg, "init_at_random_ep_len", False),
-        )
+
+        stage2_remaining = _get_remaining_iterations(runner.current_learning_iteration, agent_cfg.max_iterations)
+        if stage2_remaining > 0:
+            runner.learn(
+                num_learning_iterations=stage2_remaining,
+                init_at_random_ep_len=getattr(agent_cfg, "init_at_random_ep_len", False),
+            )
+        else:
+            print(f"[两阶段] 阶段2无需继续训练: 当前轮数 {runner.current_learning_iteration} 已达到目标 {agent_cfg.max_iterations}")
     else:
         # ---- 单阶段 (全地形或恢复) ----
-        runner.learn(
-            num_learning_iterations=agent_cfg.max_iterations,
-            init_at_random_ep_len=getattr(agent_cfg, "init_at_random_ep_len", False),
-        )
+        remaining_iterations = _get_remaining_iterations(runner.current_learning_iteration, agent_cfg.max_iterations)
+        if remaining_iterations > 0:
+            runner.learn(
+                num_learning_iterations=remaining_iterations,
+                init_at_random_ep_len=getattr(agent_cfg, "init_at_random_ep_len", False),
+            )
+        else:
+            print(f"[训练] 当前 checkpoint 已达到目标总轮数 {agent_cfg.max_iterations}，跳过训练。")
 
     print("5")
     print("迭代完成")

@@ -186,7 +186,7 @@ class B2RMRewardsCfg:
     track_lin_vel_xy_exp = RewTerm(
         func=mdp.track_lin_vel_xy_exp,
         weight=4.0,
-        params={"command_name": "base_velocity", "std": 0.35},
+        params={"command_name": "base_velocity", "std": 0.5},
     )
     track_ang_vel_z_exp = RewTerm(
         func=mdp.track_ang_vel_z_exp,
@@ -195,19 +195,24 @@ class B2RMRewardsCfg:
     )
     heading_error = RewTerm(
         func=mdp.heading_error,
-        weight=-0.4,
+        weight=-1.5,
         params={"command_name": "base_velocity"},
     )
     dont_wait = RewTerm(
         func=mdp.dont_wait,
-        weight=-5.0,
+        weight=-2.0,
+        params={"command_name": "base_velocity"},
+    )
+    must_turn = RewTerm(
+        func=mdp.must_turn,
+        weight=-2.0,
         params={"command_name": "base_velocity"},
     )
     is_alive = RewTerm(func=mdp.is_alive, weight=2.0)
     stand_still = RewTerm(
         func=mdp.stand_still,
-        weight=0.0,
-        params={"command_name": "base_velocity", "offset": 4.0},
+        weight=-1.0,
+        params={"command_name": "base_velocity", "offset": 0.0, "threshold": 0.15},
     )
     volume_points_penetration = RewTerm(
         func=mdp.volume_points_penetration,
@@ -257,11 +262,12 @@ class B2RMRewardsCfg:
             )
         },
     )
-    ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.02)
-    lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
+    ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.2)
+    lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-1.5)
+    roll_l2 = RewTerm(func=mdp.roll_l2, weight=-2.0)
     dof_torques_l2 = RewTerm(
         func=mdp.joint_torques_l2,
-        weight=-1.5e-07,
+        weight=-2.5e-05,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
@@ -271,7 +277,7 @@ class B2RMRewardsCfg:
     )
     dof_acc_l2 = RewTerm(
         func=mdp.joint_acc_l2,
-        weight=-1.25e-07,
+        weight=-7.5e-07,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot", joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"]
@@ -287,12 +293,12 @@ class B2RMRewardsCfg:
             )
         },
     )
-    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.005)
+    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.015)
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-2.5)
     base_pitch_l2 = RewTerm(func=mdp.base_pitch_l2, weight=-2.0)
     base_height = RewTerm(
         func=mdp.base_height_l2,
-        weight=-8.0,
+        weight=-4.0,
         params={"target_height": 0.55},
     )
     joint_deviation_legs = RewTerm(
@@ -303,6 +309,93 @@ class B2RMRewardsCfg:
                 "robot",
                 joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
             )
+        },
+    )
+    dof_pos_limits = RewTerm(
+        func=mdp.joint_pos_limits,
+        weight=-1.0,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
+            )
+        },
+    )
+    # ===== HYT 新增项 =====
+    feet_height = RewTerm(
+        func=mdp.feet_height,
+        weight=1.0,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "target_height": 0.3,
+        },
+    )
+    work_l2 = RewTerm(
+        func=mdp.work_l2,
+        weight=-0.003,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
+            )
+        },
+    )
+    delta_torques = RewTerm(
+        func=mdp.delta_torques,
+        weight=-1.0e-07,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
+            )
+        },
+    )
+    feet_jerk = RewTerm(
+        func=mdp.feet_jerk,
+        weight=-0.0002,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+        },
+    )
+    contact_forces_penalty = RewTerm(
+        func=mdp.contact_forces_penalty,
+        weight=-0.001,
+        params={
+            "threshold": 120.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+        },
+    )
+    tracking_contacts_shaped_force = RewTerm(
+        func=mdp.tracking_contacts_shaped_force,
+        weight=-2.0,
+        params={
+            "command_name": "base_velocity",
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "sigma": 0.5,
+            "kappa": 0.07,
+        },
+    )
+    tracking_contacts_shaped_vel = RewTerm(
+        func=mdp.tracking_contacts_shaped_vel,
+        weight=-2.0,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "sigma": 0.5,
+        },
+    )
+    walking_dof = RewTerm(
+        func=mdp.walking_dof,
+        weight=0.5,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
+            ),
         },
     )
 
@@ -375,30 +468,32 @@ class B2RMCommandsCfg:
         debug_vis=False,
         velocity_control_stiffness=2.0,
         heading_control_stiffness=2.0,
-        only_positive_lin_vel_x=True,
+        only_positive_lin_vel_x=False,
         rel_standing_envs=0.0,
         ranges=mdp.PoseVelocityCommandCfg.Ranges(
-            lin_vel_x=(0.2, 0.8),
+            lin_vel_x=(-0.5, 0.8),
             lin_vel_y=(0.0, 0.0),
-            ang_vel_z=(-0.8, 0.8)
+            ang_vel_z=(-1.0, 1.0)
         ),
         random_velocity_terrain=[],
         velocity_ranges={
-            "perlin_rough": {"lin_vel_x": (0.2, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.4, 0.4)},
+            "perlin_rough": {"lin_vel_x": (-0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.8, 0.8)},
             "perlin_rough_stand": {"lin_vel_x": (0.0, 0.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (0.0, 0.0)},
-            "square_gaps": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.5, 0.5)},
-            "pyramid_stairs": {"lin_vel_x": (0.35, 0.70), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.08, 0.08)},
-            "pyramid_stairs_high": {"lin_vel_x": (0.30, 0.60), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.06, 0.06)},
-            "pyramid_stairs_inv": {"lin_vel_x": (0.35, 0.70), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.08, 0.08)},
-            "pyramid_stairs_inv_high": {"lin_vel_x": (0.30, 0.60), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.06, 0.06)},
-            "boxes": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.6, 0.6)},
-            "mesh_boxes": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.6, 0.6)},
-            "hf_pyramid_slope_inv": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.5, 0.5)},
-            "raised_mound": {"lin_vel_x": (0.55, 0.9), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.15, 0.15)},
-            "pit_crater": {"lin_vel_x": (0.55, 0.9), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.15, 0.15)},
-            "wave": {"lin_vel_x": (0.45, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.6, 0.6)},
+            "square_gaps": {"lin_vel_x": (-0.3, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.5, 0.5)},
+            "pyramid_stairs": {"lin_vel_x": (-0.3, 0.70), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.08, 0.08)},
+            "pyramid_stairs_high": {"lin_vel_x": (-0.3, 0.60), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.06, 0.06)},
+            "pyramid_stairs_inv": {"lin_vel_x": (-0.3, 0.70), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.08, 0.08)},
+            "pyramid_stairs_inv_high": {"lin_vel_x": (-0.3, 0.60), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.06, 0.06)},
+            "boxes": {"lin_vel_x": (-0.3, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.6, 0.6)},
+            "mesh_boxes": {"lin_vel_x": (-0.3, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.6, 0.6)},
+            "hf_pyramid_slope_inv": {"lin_vel_x": (-0.3, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.5, 0.5)},
+            "raised_mound": {"lin_vel_x": (-0.2, 0.9), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.15, 0.15)},
+            "pit_crater": {"lin_vel_x": (-0.2, 0.9), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.15, 0.15)},
+            "wave": {"lin_vel_x": (-0.3, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.6, 0.6)},
             "circle_track": {"lin_vel_x": (0.0, 0.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
         },
+        lin_vel_threshold=0.0,
+        ang_vel_threshold=0.0,
     )
 
 

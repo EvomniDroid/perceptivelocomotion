@@ -281,38 +281,45 @@ def main():
     override_command = torch.zeros(env.num_envs, 3, device=env.device)
     command_obs_slice = get_obs_slice(env.get_obs_segments(), "velocity_commands")
 
-    cmd_display_names = {"W": "前", "S": "后", "A": "左移", "D": "右移", "Q": "左转", "E": "右转", "X": "急停"}
+    cmd_display_names = {"W": "前进", "S": "减速", "A": "左转", "D": "右转", "Q": "停转", "E": "停转", "X": "急停"}
     _print_vel_help = True
 
     print("=" * 60)
     print("键盘控制已启用:")
-    print("  W / S      : 前进 / 后退  (+/-" + str(args_cli.keyboard_linvel_step) + " m/s)")
-    print("  A / D      : 左移 / 右移  (+/-" + str(args_cli.keyboard_linvel_step) + " m/s)")
-    print("  Q / E      : 左转 / 右转  (" + str(args_cli.keyboard_angvel) + " rad/s)")
+    print("  W          : 前进加速  (+" + str(args_cli.keyboard_linvel_step) + " m/s)")
+    print("  S          : 前进减速  (-" + str(args_cli.keyboard_linvel_step) + " m/s, 最低 0)")
+    print("  A / D      : 左转 / 右转  (" + str(args_cli.keyboard_angvel) + " rad/s)")
+    print("  Q / E      : 停止转向")
     print("  X          : 急停归零")
-    print("  长按可累计叠加速度")
+    print("  长按 W / S 可累计调整前进速度")
     print("=" * 60)
 
     def on_keyboard_input(e):
         global _print_vel_help
         key_map = {
-            carb.input.KeyboardInput.W: (0, 1.0, "W"),
-            carb.input.KeyboardInput.S: (0, -1.0, "S"),
-            carb.input.KeyboardInput.A: (1, 1.0, "A"),
-            carb.input.KeyboardInput.D: (1, -1.0, "D"),
-            carb.input.KeyboardInput.Q: (2, 1.0, "Q"),
-            carb.input.KeyboardInput.E: (2, -1.0, "E"),
-            carb.input.KeyboardInput.X: (-1, 0.0, "X"),
+            carb.input.KeyboardInput.W: "W",
+            carb.input.KeyboardInput.S: "S",
+            carb.input.KeyboardInput.A: "A",
+            carb.input.KeyboardInput.D: "D",
+            carb.input.KeyboardInput.Q: "Q",
+            carb.input.KeyboardInput.E: "E",
+            carb.input.KeyboardInput.X: "X",
         }
         if e.input in key_map:
-            idx, sign, name = key_map[e.input]
+            name = key_map[e.input]
             if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
                 if name == "X":
                     override_command[:] = 0.0
+                elif name == "W":
+                    override_command[:, 0] += args_cli.keyboard_linvel_step
+                elif name == "S":
+                    override_command[:, 0] = torch.clamp(override_command[:, 0] - args_cli.keyboard_linvel_step, min=0.0)
+                elif name == "A":
+                    override_command[:, 2] = args_cli.keyboard_angvel
+                elif name == "D":
+                    override_command[:, 2] = -args_cli.keyboard_angvel
                 elif name in ("Q", "E"):
-                    override_command[:, 2] = sign * args_cli.keyboard_angvel
-                else:
-                    override_command[:, idx] += sign * args_cli.keyboard_linvel_step
+                    override_command[:, 2] = 0.0
                 vx = override_command[0, 0].item()
                 vy = override_command[0, 1].item()
                 wz = override_command[0, 2].item()
