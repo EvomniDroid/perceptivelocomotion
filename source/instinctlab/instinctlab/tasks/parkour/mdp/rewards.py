@@ -427,12 +427,14 @@ def tracking_contacts_shaped_force(
     原 bug：用 episode 时间硬跑 sin² 相位，期望"phase=0 全踩 / phase=0.5 全腾"，
     4 足 Trot 模式下持续扣分 → 策略被逼学 bounding 跳。
 
-    修复后的语义（HYT 原意）：
-    - 鼓励 **FL+RR vs FR+RL 对角腿接触力平衡**（Diagonal Trot 对称性）
-    - 鼓励 **"总接触力 ≈ 一半"**（避免全离地跳 + 鼓励迈步）
-    - kappa 真正用作 phase EMA 平滑（防止 episode reset 突变）
+    修复后的语义：
+    - 惩罚 **非对角腿同时强接触**（anti-pacing / anti-bound）
+    - 鼓励 **"总接触力 ≈ 一半"**（避免全离地跳 + 避免四足同时重踩）
+    - kappa 用作 phase EMA 平滑（防止 episode reset 突变）
 
-    期望 contact 信号：diagonal_FL_RR = diagonal_FR_RL
+    期望 contact 信号：
+    - 对角步时，非对角腿同步接触应尽量少
+    - 直行时约束更强，转向时适度放松
     期望 force 均值：0.5（B2RM 满力 120N → 期望 60N 单腿均值）
     """
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
@@ -443,11 +445,15 @@ def tracking_contacts_shaped_force(
     max_force = 120.0
     contact_norm = torch.clamp(contact_norm / max_force, 0.0, 1.0)
 
-    # 1) 对角对称性：FL+RR 应等于 FR+RL
-    #    B2RM body_ids 顺序通常是 [FL, FR, RL, RR]
-    diagonal_FL_RR = contact_norm[:, 0] + contact_norm[:, 3]
-    diagonal_FR_RL = contact_norm[:, 1] + contact_norm[:, 2]
-    symmetry_error = (diagonal_FL_RR - diagonal_FR_RL) ** 2
+    # 1) Anti-pacing：惩罚非对角腿同时强接触。
+    #    B2RM body_ids 顺序通常是 [FL, FR, RL, RR]。
+    #    理想对角步中，非对角配对同时强接触应尽量少。
+    symmetry_error = (
+        contact_norm[:, 0] * contact_norm[:, 1]  # FL-FR
+        + contact_norm[:, 0] * contact_norm[:, 2]  # FL-RL
+        + contact_norm[:, 1] * contact_norm[:, 3]  # FR-RR
+        + contact_norm[:, 2] * contact_norm[:, 3]  # RL-RR
+    )
 
     # 2) 总接触力 ≈ 0.5（防 bounding 跳 + 防全 4 脚 stand）
     #    行走时 2 脚触地，期望 mean force ≈ 0.5
@@ -466,13 +472,23 @@ def tracking_contacts_shaped_force(
     # 总误差
     error = symmetry_error + mean_error + phase_jitter
 
-    # 没速度命令时（应该 stand）不约束步态相位
+    # 没速度命令时（应该 stand）不约束步态相位。
+    # 直行时最强调对角步；转向时适度放松，避免把已学到的转向能力压坏。
     cmd_vel = env.command_manager.get_command(command_name)
-    has_cmd = torch.logical_or(
-        torch.norm(cmd_vel[:, :2], dim=1) > 0.1,
-        torch.abs(cmd_vel[:, 2]) > 0.1,
+    lin_cmd_mag = torch.norm(cmd_vel[:, :2], dim=1)
+    forward_cmd = lin_cmd_mag > 0.1
+    yaw_cmd = torch.abs(cmd_vel[:, 2]) > 0.1
+    gate = torch.where(
+        forward_cmd & ~yaw_cmd,
+        torch.ones_like(lin_cmd_mag),
+        torch.where(
+            yaw_cmd & ~forward_cmd,
+            torch.full_like(lin_cmd_mag, 0.3),
+            torch.full_like(lin_cmd_mag, 0.7),
+        ),
     )
-    return error * has_cmd.float()
+    has_cmd = torch.logical_or(forward_cmd, yaw_cmd)
+    return error * gate * has_cmd.float()
 
 
 def tracking_contacts_shaped_vel(
