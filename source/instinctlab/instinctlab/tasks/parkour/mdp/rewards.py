@@ -29,12 +29,40 @@ def feet_air_time(env, command_name: str, vel_threshold: float, sensor_cfg: Scen
     num_contact = torch.sum(in_contact.int(), dim=1)
     has_swing = torch.logical_and(num_contact > 0, num_contact < in_contact.shape[1])
     reward = torch.mean(swing_air_time, dim=1) * has_swing.float()
+    # ===== 新增 4 足均衡约束 =====
+    # 单脚最大腾空时间不能显著大于平均（防止某只脚长期悬空）
+    max_swing = torch.max(air_time, dim=1).values
+    mean_swing = torch.mean(air_time, dim=1)
+    asymmetry = torch.clamp(max_swing - 1.5 * (mean_swing + 0.1), min=0.0) ** 2
+    reward = reward - 0.3 * asymmetry
+    # ===== 结束 =====
     # 针对零指令的情况不给奖励
     reward *= torch.logical_or(
         torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > vel_threshold,
         torch.abs(env.command_manager.get_command(command_name)[:, 2]) > vel_threshold,
     )
     return reward
+
+
+def foot_contact_balance(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+    max_air_time: float = 0.5,
+) -> torch.Tensor:
+    """强制 4 足都参与：每只脚在 max_air_time 秒内必须接触过至少 1 次。
+
+    惩罚：任何一只脚腾空时间超过 max_air_time 的平方和。
+    用法：weight=-2.0，强制策略让所有 4 脚都参与支撑 / 摆动周期。
+
+    与 feet_air_time 的 4 足均衡约束互补：
+    - feet_air_time 的 asymmetry 是"软约束"（max > 1.5*mean 扣分）
+    - foot_contact_balance 是"硬约束"（单脚 > max_air_time 直接扣分）
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    air_time = contact_sensor.data.current_air_time[:, sensor_cfg.body_ids]  # (B, 4)
+    # 单脚腾空超过阈值 → 扣分（平方惩罚）
+    penalty = torch.sum(torch.clamp(air_time - max_air_time, min=0.0) ** 2, dim=1)
+    return penalty
 
 
 def stand_still(

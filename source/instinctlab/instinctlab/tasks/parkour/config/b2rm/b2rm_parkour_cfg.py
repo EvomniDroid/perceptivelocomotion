@@ -233,6 +233,17 @@ class B2RMRewardsCfg:
             "vel_threshold": 0.15,
         },
     )
+    # 新增：强制 4 足都参与 - 任何一只脚腾空超 1.0s 直接扣分（防"三条腿走路"局部最优）
+    # 1.0s 阈值能覆盖：爬台子 (~0.6s)、跨越 gap (~0.8s)、复杂地形 stance 调整 (~1.0s)
+    # 配合 feet_air_time 的 asymmetry 软约束（max > 1.5 * mean 扣分）做两层防御
+    foot_contact_balance = RewTerm(
+        func=mdp.foot_contact_balance,
+        weight=-2.0,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "max_air_time": 1.0,
+        },
+    )
     feet_slide = RewTerm(
         func=mdp.contact_slide,
         weight=-0.5,
