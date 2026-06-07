@@ -12,6 +12,7 @@ from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
 from instinctlab.managers import MultiRewardCfg
+from instinctlab.monitors import FootStatMonitorTerm, MonitorTermCfg
 from instinctlab.tasks.parkour.config.parkour_env_cfg import CurriculumCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
@@ -206,13 +207,13 @@ class B2RMRewardsCfg:
     must_turn = RewTerm(
         func=mdp.must_turn,
         weight=-2.0,
-        params={"command_name": "base_velocity"},
+        params={"command_name": "base_velocity", "cmd_threshold": 0.05, "min_turn_rate": 0.05, "target_ratio": 0.6},
     )
     is_alive = RewTerm(func=mdp.is_alive, weight=2.0)
     stand_still = RewTerm(
         func=mdp.stand_still,
         weight=-1.0,
-        params={"command_name": "base_velocity", "offset": 0.0, "threshold": 0.15},
+        params={"command_name": "base_velocity", "offset": 0.0, "threshold": 0.05},
     )
     volume_points_penetration = RewTerm(
         func=mdp.volume_points_penetration,
@@ -242,6 +243,15 @@ class B2RMRewardsCfg:
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
             "max_air_time": 1.0,
+        },
+    )
+    feet_air_time_balance = RewTerm(
+        func=mdp.feet_air_time_balance,
+        weight=-2.0,
+        params={
+            "command_name": "base_velocity",
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "vel_threshold": 0.15,
         },
     )
     feet_slide = RewTerm(
@@ -341,6 +351,16 @@ class B2RMRewardsCfg:
             "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
             "target_height": 0.3,
+        },
+    )
+    feet_height_balance = RewTerm(
+        func=mdp.feet_height_balance,
+        weight=-8.0,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+            "max_height": 0.36,
         },
     )
     work_l2 = RewTerm(
@@ -482,11 +502,12 @@ class B2RMCommandsCfg:
         only_positive_lin_vel_x=False,
         rel_standing_envs=0.0,
         ranges=mdp.PoseVelocityCommandCfg.Ranges(
-            lin_vel_x=(-0.5, 0.8),
+            lin_vel_x=(0.0, 0.0),
             lin_vel_y=(0.0, 0.0),
             ang_vel_z=(-1.0, 1.0)
         ),
-        random_velocity_terrain=[],
+        random_velocity_terrain=["perlin_rough_stand"],
+        random_ang_vel_threshold=0.0,
         velocity_ranges={
             "perlin_rough": {"lin_vel_x": (-0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.8, 0.8)},
             "perlin_rough_stand": {"lin_vel_x": (0.0, 0.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (0.0, 0.0)},
@@ -578,7 +599,14 @@ class B2RMActionsCfg:
 
 @configclass
 class B2RMMonitorsCfg:
-    pass
+    foot_stats = MonitorTermCfg(
+        func=FootStatMonitorTerm,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"]),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"]),
+            "foot_names": ["FL", "FR", "RL", "RR"],
+        },
+    )
 
 
 @configclass

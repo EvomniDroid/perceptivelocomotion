@@ -234,7 +234,8 @@ class PoseVelocityCommand(CommandTerm):
                 self.random_ang_vel_z_range[random_velocity_env_ids, 1]
                 - self.random_ang_vel_z_range[random_velocity_env_ids, 0]
             )
-            self.random_ang_vel_z *= torch.abs(self.random_ang_vel_z) > 0.5
+            if self.cfg.random_ang_vel_threshold > 0.0:
+                self.random_ang_vel_z *= torch.abs(self.random_ang_vel_z) > self.cfg.random_ang_vel_threshold
 
     def _update_command(self):
         """Re-target the position command to the current root state."""

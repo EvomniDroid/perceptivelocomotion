@@ -46,6 +46,9 @@ class PoseVelocityCommandCfg(CommandTermCfg):
     random_velocity_terrain: list[str] = None
     """List of terrain types for which the velocity commands should be randomized."""
 
+    random_ang_vel_threshold: float = 0.5
+    """Random angular velocity commands below this magnitude are zeroed. Set to 0.0 to keep small turns."""
+
     velocity_ranges: dict = None
     """Dictionary containing velocity ranges for different terrains. If not None, the velocity ranges will be set based on the terrain type."""
 

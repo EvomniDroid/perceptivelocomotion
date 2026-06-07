@@ -53,7 +53,8 @@ parser.add_argument("--vel_debug", action="store_true", default=False, help="启
 parser.add_argument("--vel", type=str, default="0.5,0.0,0.0", help="调试模式速度向量: vel_x,vel_y,ang_z (逗号分隔，默认0.5,0.0,0.0)")
 parser.add_argument("--keyboard_control", action="store_true", default=False, help="启用键盘控制速度 (WASD)")
 parser.add_argument("--keyboard_linvel_step", type=float, default=0.5, help="键盘每次调整的速度增量")
-parser.add_argument("--keyboard_angvel", type=float, default=1.0, help="键盘控制的角速度大小")
+parser.add_argument("--keyboard_angvel", type=float, default=1.0, help="键盘控制的最大角速度大小")
+parser.add_argument("--keyboard_angvel_step", type=float, default=0.1, help="键盘每次调整的角速度增量")
 parser.add_argument("--termination_mode", type=str, default="full", help="终止模式: full=摔倒/出界等, time_only=仅超时, none=不禁用")
 parser.add_argument("--debug_ray", action="store_true", default=False, help="启用射线检测可视化")
 parser.add_argument("--target_pos", type=str, default=None, help="目标位置(x,y)，例如2.0,2.0，单位米")
@@ -682,6 +683,7 @@ def main():
     fusion_calculator = FusionCostCalculator(fall_rate_penalty=fall_rate_penalty, urgency_reference_dist=urgency_ref_dist)
     print(f"[INFO] Fusion成本计算器已初始化: fall_rate_penalty={fall_rate_penalty}, urgency_ref_dist={urgency_ref_dist}m")
     keyboard_angvel = getattr(args_cli, 'keyboard_angvel', 1.0)
+    keyboard_angvel_step = getattr(args_cli, 'keyboard_angvel_step', 0.1)
 
     emergency_stop = False
     last_emergency_state = False
@@ -698,16 +700,24 @@ def main():
                     print(f"[键盘] S: vel_x -= {keyboard_linvel_step} -> {keyboard_command[0, 0].item():.2f}")
             if e.input == carb.input.KeyboardInput.A:
                 if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
-                    keyboard_command[:, 2] = keyboard_angvel
-                    print(f"[键盘] A: 左转 ang_z = {keyboard_angvel}")
+                    keyboard_command[:, 2] = torch.clamp(
+                        keyboard_command[:, 2] + keyboard_angvel_step,
+                        min=-keyboard_angvel,
+                        max=keyboard_angvel,
+                    )
+                    print(f"[键盘] A: 左转 ang_z += {keyboard_angvel_step} -> {keyboard_command[0, 2].item():.2f}")
             if e.input == carb.input.KeyboardInput.Q:
                 if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
                     keyboard_command[:, 2] = 0.0
                     print(f"[键盘] Q: 停止转向")
             if e.input == carb.input.KeyboardInput.D:
                 if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
-                    keyboard_command[:, 2] = -keyboard_angvel
-                    print(f"[键盘] D: 右转 ang_z = {-keyboard_angvel}")
+                    keyboard_command[:, 2] = torch.clamp(
+                        keyboard_command[:, 2] - keyboard_angvel_step,
+                        min=-keyboard_angvel,
+                        max=keyboard_angvel,
+                    )
+                    print(f"[键盘] D: 右转 ang_z -= {keyboard_angvel_step} -> {keyboard_command[0, 2].item():.2f}")
             if e.input == carb.input.KeyboardInput.E:
                 if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
                     keyboard_command[:, 2] = 0.0

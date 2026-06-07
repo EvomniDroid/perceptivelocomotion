@@ -308,6 +308,59 @@ class BodyStatMonitorTerm(MonitorTerm):
             }
 
 
+class FootStatMonitorTerm(MonitorTerm):
+    """Per-foot diagnostics for height, air time, slide, and contact force."""
+
+    def __init__(self, cfg: MonitorTermCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.asset_cfg = self.cfg.params["asset_cfg"]
+        self.sensor_cfg = self.cfg.params["sensor_cfg"]
+        self.foot_names = self.cfg.params.get("foot_names", ["FL", "FR", "RL", "RR"])
+        self.asset = self._env.scene[self.asset_cfg.name]
+        self.sensor = self._env.scene.sensors[self.sensor_cfg.name]
+
+        num_feet = len(self.asset_cfg.body_ids)
+        self._height = torch.zeros(self._env.num_envs, num_feet, dtype=torch.float32, device=self.device)
+        self._air_time = torch.zeros_like(self._height)
+        self._slide = torch.zeros_like(self._height)
+        self._contact_force = torch.zeros_like(self._height)
+
+    def update(self, dt: float):
+        foot_pos = self.asset.data.body_pos_w[:, self.asset_cfg.body_ids]
+        foot_vel = self.asset.data.body_lin_vel_w[:, self.asset_cfg.body_ids]
+        contact_time = self.sensor.data.current_contact_time[:, self.sensor_cfg.body_ids]
+        in_contact = contact_time > 0.0
+        forces = self.sensor.data.net_forces_w_history
+        contact_force = torch.max(torch.norm(forces[:, :, self.sensor_cfg.body_ids], dim=-1), dim=1).values
+
+        self._height[:] = foot_pos[..., 2:3].squeeze(-1) - self.asset.data.root_pos_w[:, 2:3]
+        self._air_time[:] = self.sensor.data.current_air_time[:, self.sensor_cfg.body_ids]
+        self._slide[:] = torch.norm(foot_vel[..., :2], dim=-1) * in_contact.float()
+        self._contact_force[:] = contact_force
+
+    def reset_idx(self, env_ids: Sequence[int] | slice):
+        self._height[env_ids] = 0.0
+        self._air_time[env_ids] = 0.0
+        self._slide[env_ids] = 0.0
+        self._contact_force[env_ids] = 0.0
+
+    def get_log(self, is_episode=False) -> dict[str, float | torch.Tensor]:
+        if is_episode:
+            return {}
+
+        log = {}
+        for foot_id, foot_name in enumerate(self.foot_names):
+            log[f"{foot_name}_height"] = self._height[:, foot_id].mean()
+            log[f"{foot_name}_air_time"] = self._air_time[:, foot_id].mean()
+            log[f"{foot_name}_slide"] = self._slide[:, foot_id].mean()
+            log[f"{foot_name}_contact_force"] = self._contact_force[:, foot_id].mean()
+
+        log["height_range"] = (self._height.max(dim=1).values - self._height.min(dim=1).values).mean()
+        log["air_time_range"] = (self._air_time.max(dim=1).values - self._air_time.min(dim=1).values).mean()
+        log["slide_range"] = (self._slide.max(dim=1).values - self._slide.min(dim=1).values).mean()
+        return log
+
+
 class MotionReferenceMonitorTerm(MonitorTerm):
     def __init__(self, cfg: MonitorTermCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)

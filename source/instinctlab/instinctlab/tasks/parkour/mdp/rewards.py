@@ -65,6 +65,44 @@ def foot_contact_balance(
     return penalty
 
 
+def feet_air_time_balance(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+    vel_threshold: float = 0.15,
+) -> torch.Tensor:
+    """惩罚两组对角腿腾空时间不均衡。
+
+    B2RM 足端顺序按 [FL, FR, RL, RR] 处理：
+    - FL/RR 是一组对角腿
+    - FR/RL 是一组对角腿
+
+    直走时约束最强，转向时放轻，避免把转向需要的非对称步态压掉。
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    air_time = contact_sensor.data.current_air_time[:, sensor_cfg.body_ids]
+
+    fl_rr_air_time = 0.5 * (air_time[:, 0] + air_time[:, 3])
+    fr_rl_air_time = 0.5 * (air_time[:, 1] + air_time[:, 2])
+    error = torch.square(fl_rr_air_time - fr_rl_air_time)
+
+    cmd_vel = env.command_manager.get_command(command_name)
+    lin_cmd_mag = torch.norm(cmd_vel[:, :2], dim=1)
+    forward_cmd = lin_cmd_mag > vel_threshold
+    yaw_cmd = torch.abs(cmd_vel[:, 2]) > vel_threshold
+    gate = torch.where(
+        forward_cmd & ~yaw_cmd,
+        torch.ones_like(lin_cmd_mag),
+        torch.where(
+            yaw_cmd & ~forward_cmd,
+            torch.full_like(lin_cmd_mag, 0.2),
+            torch.full_like(lin_cmd_mag, 0.5),
+        ),
+    )
+    has_cmd = torch.logical_or(forward_cmd, yaw_cmd)
+    return error * gate * has_cmd.float()
+
+
 def stand_still(
     env: ManagerBasedRLEnv,
     command_name: str,
@@ -164,6 +202,7 @@ def must_turn(
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     cmd_threshold: float = 0.2,
     min_turn_rate: float = 0.15,
+    target_ratio: float = 0.0,
 ) -> torch.Tensor:
     """当存在明确 yaw 指令时，惩罚机器人没有朝正确方向开始转动。"""
     asset: RigidObject = env.scene[asset_cfg.name]
@@ -171,7 +210,12 @@ def must_turn(
     actual_wz = asset.data.root_ang_vel_b[:, 2]
 
     signed_turn_rate = torch.sign(yaw_cmd) * actual_wz
-    penalty = torch.clamp(min_turn_rate - signed_turn_rate, min=0.0) / max(min_turn_rate, 1.0e-6)
+    target_turn_rate = torch.full_like(yaw_cmd, min_turn_rate)
+    if target_ratio > 0.0:
+        target_turn_rate = torch.maximum(target_turn_rate, target_ratio * torch.abs(yaw_cmd))
+    penalty = torch.clamp(target_turn_rate - signed_turn_rate, min=0.0) / torch.clamp(
+        target_turn_rate, min=1.0e-6
+    )
     return (torch.abs(yaw_cmd) > cmd_threshold).float() * penalty
 
 
@@ -318,6 +362,60 @@ def feet_height(
         torch.abs(env.command_manager.get_command(command_name)[:, 2]) > vel_threshold,
     )
     return reward * has_cmd.float()
+
+
+def feet_height_balance(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+    max_height: float = 0.36,
+    base_to_ground_height: float = 0.4,
+) -> torch.Tensor:
+    """惩罚对角摆动腿高度不对称，以及单脚抬得过高。
+
+    B2RM 足端顺序按 [FL, FR, RL, RR] 处理：
+    - FL/RR 是一组对角腿
+    - FR/RL 是一组对角腿
+
+    只在两只对角腿同时处于摆动相时比较高度。直走时约束最强，转向时放轻，
+    避免压坏转向策略。
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    swing = contact_time <= 0.0
+
+    foot_z = asset.data.body_pos_w[:, asset_cfg.body_ids, 2]
+    base_z = asset.data.root_pos_w[:, 2].unsqueeze(1)
+    foot_height_rel = foot_z - (base_z - base_to_ground_height)
+
+    diagonal_pairs = ((0, 3), (1, 2))
+    pair_errors = []
+    for left_id, right_id in diagonal_pairs:
+        pair_swing = swing[:, left_id] & swing[:, right_id]
+        height_diff = foot_height_rel[:, left_id] - foot_height_rel[:, right_id]
+        pair_errors.append(torch.square(height_diff) * pair_swing.float())
+    symmetry_error = torch.stack(pair_errors, dim=1).sum(dim=1)
+
+    over_height = torch.clamp(foot_height_rel - max_height, min=0.0)
+    over_height_error = torch.sum(torch.square(over_height) * swing.float(), dim=1)
+
+    cmd_vel = env.command_manager.get_command(command_name)
+    lin_cmd_mag = torch.norm(cmd_vel[:, :2], dim=1)
+    forward_cmd = lin_cmd_mag > 0.1
+    yaw_cmd = torch.abs(cmd_vel[:, 2]) > 0.1
+    gate = torch.where(
+        forward_cmd & ~yaw_cmd,
+        torch.ones_like(lin_cmd_mag),
+        torch.where(
+            yaw_cmd & ~forward_cmd,
+            torch.full_like(lin_cmd_mag, 0.2),
+            torch.full_like(lin_cmd_mag, 0.5),
+        ),
+    )
+    has_cmd = torch.logical_or(forward_cmd, yaw_cmd)
+    return (symmetry_error + over_height_error) * gate * has_cmd.float()
 
 
 def work_l2(
@@ -586,5 +684,3 @@ def walking_dof(
         torch.abs(env.command_manager.get_command(command_name)[:, 2]) > vel_threshold,
     )
     return reward * has_cmd.float()
-
-

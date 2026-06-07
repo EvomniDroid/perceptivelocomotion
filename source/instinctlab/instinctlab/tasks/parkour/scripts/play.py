@@ -53,7 +53,8 @@ parser.add_argument("--sample", action="store_true", default=False, help="使用
 parser.add_argument("--zero_act_until", type=int, default=0, help="到指定步数前动作为零。")
 parser.add_argument("--keyboard_control", action="store_true", default=False, help="启用键盘控制(WASD走, QE转, X归零)。")
 parser.add_argument("--keyboard_linvel_step", type=float, default=0.5, help="键盘每次调整的线速度增量。")
-parser.add_argument("--keyboard_angvel", type=float, default=1.0, help="键盘控制的角速度。")
+parser.add_argument("--keyboard_angvel", type=float, default=1.0, help="键盘控制的最大角速度。")
+parser.add_argument("--keyboard_angvel_step", type=float, default=0.1, help="键盘每次调整的角速度增量。")
 parser.add_argument("--free_view", action="store_true", default=False, help="自由视角（不跟随机器人）。")
 parser.add_argument("--debug_ray", action="store_true", default=False, help="启用射线检测可视化。")
 parser.add_argument("--save_depth_interval", type=int, default=0, help="每N步保存一次俯视深度图，0表示禁用。")
@@ -288,10 +289,16 @@ def main():
     print("键盘控制已启用:")
     print("  W          : 前进加速  (+" + str(args_cli.keyboard_linvel_step) + " m/s)")
     print("  S          : 前进减速  (-" + str(args_cli.keyboard_linvel_step) + " m/s, 最低 0)")
-    print("  A / D      : 左转 / 右转  (" + str(args_cli.keyboard_angvel) + " rad/s)")
+    print(
+        "  A / D      : 左转 / 右转  (每次 "
+        + str(args_cli.keyboard_angvel_step)
+        + " rad/s, 上限 "
+        + str(args_cli.keyboard_angvel)
+        + " rad/s)"
+    )
     print("  Q / E      : 停止转向")
     print("  X          : 急停归零")
-    print("  长按 W / S 可累计调整前进速度")
+    print("  长按 W / S / A / D 可累计调整速度")
     print("=" * 60)
 
     def on_keyboard_input(e):
@@ -315,9 +322,17 @@ def main():
                 elif name == "S":
                     override_command[:, 0] = torch.clamp(override_command[:, 0] - args_cli.keyboard_linvel_step, min=0.0)
                 elif name == "A":
-                    override_command[:, 2] = args_cli.keyboard_angvel
+                    override_command[:, 2] = torch.clamp(
+                        override_command[:, 2] + args_cli.keyboard_angvel_step,
+                        min=-args_cli.keyboard_angvel,
+                        max=args_cli.keyboard_angvel,
+                    )
                 elif name == "D":
-                    override_command[:, 2] = -args_cli.keyboard_angvel
+                    override_command[:, 2] = torch.clamp(
+                        override_command[:, 2] - args_cli.keyboard_angvel_step,
+                        min=-args_cli.keyboard_angvel,
+                        max=args_cli.keyboard_angvel,
+                    )
                 elif name in ("Q", "E"):
                     override_command[:, 2] = 0.0
                 vx = override_command[0, 0].item()
