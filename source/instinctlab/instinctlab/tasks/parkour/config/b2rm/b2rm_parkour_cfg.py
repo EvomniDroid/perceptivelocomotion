@@ -83,7 +83,7 @@ class B2RMSceneCfg(InteractiveSceneCfg):
         prim_path="/World/ground",
         terrain_type="hacked_generator",
         terrain_generator=ROUGH_TERRAINS_CFG,
-        max_init_terrain_level=5,
+        max_init_terrain_level=3,
         collision_group=-1,
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",
@@ -247,7 +247,7 @@ class B2RMRewardsCfg:
     )
     feet_air_time_balance = RewTerm(
         func=mdp.feet_air_time_balance,
-        weight=-2.0,
+        weight=-1.0,
         params={
             "command_name": "base_velocity",
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
@@ -355,7 +355,7 @@ class B2RMRewardsCfg:
     )
     feet_height_balance = RewTerm(
         func=mdp.feet_height_balance,
-        weight=-8.0,
+        weight=-4.0,
         params={
             "command_name": "base_velocity",
             "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
@@ -499,7 +499,7 @@ class B2RMCommandsCfg:
         debug_vis=False,
         velocity_control_stiffness=2.0,
         heading_control_stiffness=2.0,
-        only_positive_lin_vel_x=False,
+        only_positive_lin_vel_x=True,
         rel_standing_envs=0.0,
         ranges=mdp.PoseVelocityCommandCfg.Ranges(
             lin_vel_x=(0.0, 0.0),
@@ -509,19 +509,20 @@ class B2RMCommandsCfg:
         random_velocity_terrain=["perlin_rough_stand"],
         random_ang_vel_threshold=0.0,
         velocity_ranges={
-            "perlin_rough": {"lin_vel_x": (-0.4, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.8, 0.8)},
+            "perlin_rough": {"lin_vel_x": (0.0, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.8, 0.8)},
             "perlin_rough_stand": {"lin_vel_x": (0.0, 0.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (0.0, 0.0)},
-            "square_gaps": {"lin_vel_x": (-0.3, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.5, 0.5)},
-            "pyramid_stairs": {"lin_vel_x": (-0.3, 0.70), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.08, 0.08)},
-            "pyramid_stairs_high": {"lin_vel_x": (-0.3, 0.60), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.06, 0.06)},
-            "pyramid_stairs_inv": {"lin_vel_x": (-0.3, 0.70), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.08, 0.08)},
-            "pyramid_stairs_inv_high": {"lin_vel_x": (-0.3, 0.60), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.06, 0.06)},
-            "boxes": {"lin_vel_x": (-0.3, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.6, 0.6)},
-            "mesh_boxes": {"lin_vel_x": (-0.3, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.6, 0.6)},
-            "hf_pyramid_slope_inv": {"lin_vel_x": (-0.3, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.5, 0.5)},
-            "raised_mound": {"lin_vel_x": (-0.2, 0.9), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.15, 0.15)},
-            "pit_crater": {"lin_vel_x": (-0.2, 0.9), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.15, 0.15)},
-            "wave": {"lin_vel_x": (-0.3, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.6, 0.6)},
+            "square_gaps": {"lin_vel_x": (0.0, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.5, 0.5)},
+            "square_gaps_curriculum": {"lin_vel_x": (0.0, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.5, 0.5)},
+            "pyramid_stairs": {"lin_vel_x": (0.0, 0.70), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.08, 0.08)},
+            "pyramid_stairs_high": {"lin_vel_x": (0.0, 0.60), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.06, 0.06)},
+            "pyramid_stairs_inv": {"lin_vel_x": (0.0, 0.70), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.08, 0.08)},
+            "pyramid_stairs_inv_high": {"lin_vel_x": (0.0, 0.60), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.06, 0.06)},
+            "boxes": {"lin_vel_x": (0.0, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.6, 0.6)},
+            "mesh_boxes": {"lin_vel_x": (0.0, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.6, 0.6)},
+            "hf_pyramid_slope_inv": {"lin_vel_x": (0.0, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.5, 0.5)},
+            "raised_mound": {"lin_vel_x": (0.0, 0.9), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.15, 0.15)},
+            "pit_crater": {"lin_vel_x": (0.0, 0.9), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.15, 0.15)},
+            "wave": {"lin_vel_x": (0.0, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.6, 0.6)},
             "circle_track": {"lin_vel_x": (0.0, 0.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
         },
         lin_vel_threshold=0.0,
@@ -686,6 +687,7 @@ class B2RMParkourEnvCfg(ManagerBasedRLEnvCfg):
 ROUGH_TERRAINS_CFG_PLAY = copy.deepcopy(ROUGH_TERRAINS_CFG)
 for sub_terrain_name, sub_terrain_cfg in ROUGH_TERRAINS_CFG_PLAY.sub_terrains.items():
     sub_terrain_cfg.wall_prob = [0.0, 0.0, 0.0, 0.0]
+    sub_terrain_cfg.proportion = 1.0  # 强制每种地形至少一列
 
 
 @configclass
@@ -693,7 +695,9 @@ class B2RMParkourEnvCfg_PLAY(B2RMParkourEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         self.scene.terrain.terrain_generator = ROUGH_TERRAINS_CFG_PLAY
-        self.scene.num_envs = 10
+        # 等比例行×列 = 16 列（每种地形至少一列） × 1 行
+        n_terrains = len(ROUGH_TERRAINS_CFG_PLAY.sub_terrains)
+        self.scene.num_envs = n_terrains
         self.viewer = ViewerCfg(
             eye=[4.0, 0.75, 1.5],
             lookat=[0.0, 0.75, 0.0],
@@ -705,8 +709,13 @@ class B2RMParkourEnvCfg_PLAY(B2RMParkourEnvCfg):
         self.terminations.base_height = None
         self.terminations.base_contact = None
         if self.scene.terrain.terrain_generator is not None:
-            self.scene.terrain.terrain_generator.num_rows = 4
-            self.scene.terrain.terrain_generator.num_cols = 10
+            # 6 行 × N 列：每列固定一种地形；play 时按行固定难度，便于人工巡检。
+            self.scene.terrain.terrain_generator.num_rows = 6
+            self.scene.terrain.terrain_generator.num_cols = n_terrains
+            self.scene.terrain.terrain_generator.curriculum = True
+            self.scene.terrain.terrain_generator.deterministic_curriculum_rows = True
+            # 单 env 出生在 row 0（最简单那一行），方便键盘巡检
+            self.scene.terrain.max_init_terrain_level = 0
 
         self.commands.base_velocity.debug_vis = True
         self.commands.base_velocity.ranges = mdp.PoseVelocityCommandCfg.Ranges(

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import numpy as np
 import torch
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
@@ -71,60 +70,23 @@ class PoseVelocityCommand(CommandTerm):
         self.random_lin_vel_y = torch.zeros(self.num_envs, device=self.device)
         self.random_ang_vel_z = torch.zeros(self.num_envs, device=self.device)
 
-        if self.cfg.velocity_ranges is not None:
-            terrain_generator_cfg = self.terrain.cfg.terrain_generator
-            sub_terrains_names = list(terrain_generator_cfg.sub_terrains.keys())
-            sub_terrain_cfgs = list(terrain_generator_cfg.sub_terrains.values())
-            sub_terrain_original_names = [getattr(cfg, 'name', key) for cfg, key in zip(sub_terrain_cfgs, sub_terrains_names)]
-            num_cols = terrain_generator_cfg.num_cols
-            num_rows = terrain_generator_cfg.num_rows
-            terrain_layout = getattr(terrain_generator_cfg, 'terrain_layout', None)
-            if terrain_layout is None:
-                proportions = np.array([sub_cfg.proportion for sub_cfg in sub_terrain_cfgs])
-                proportions /= np.sum(proportions)
-                sub_indices = []
-                for index in range(num_cols):
-                    sub_index = np.min(np.where(index / num_cols + 0.001 < np.cumsum(proportions))[0])
-                    sub_indices.append(sub_index)
-                sub_indices = np.array(sub_indices, dtype=np.int32)
-            else:
-                terrain_layout_names = list(terrain_layout)
-                unique_names = list(dict.fromkeys(terrain_layout_names))
-                sub_indices = np.array([unique_names.index(name) for name in terrain_layout_names], dtype=np.int32)
-                sub_terrain_original_names = unique_names
+        self._velocity_ranges_by_name = self.cfg.velocity_ranges or {}
+        self._random_velocity_terrains = set(self.cfg.random_velocity_terrain or [])
+        self._missing_velocity_range_warnings: set[str] = set()
 
-            for key, value in self.cfg.velocity_ranges.items():
-                if key not in sub_terrain_original_names:
-                    print(f"[WARNING] Terrain type '{key}' not found in terrain generator, skipping velocity range setting.")
-                    continue
-                terrain_type_index = sub_terrain_original_names.index(key)
-                type_indices = np.where(sub_indices == terrain_type_index)[0]
-                for type_indice in type_indices:
-                    env_indices = torch.where(self.terrain.terrain_types == type_indice)[0]
-                    self.lin_vel_x_range[env_indices, 0] = value["lin_vel_x"][0]
-                    self.lin_vel_x_range[env_indices, 1] = value["lin_vel_x"][1]
-                    self.lin_vel_y_range[env_indices, 0] = value["lin_vel_y"][0]
-                    self.lin_vel_y_range[env_indices, 1] = value["lin_vel_y"][1]
-                    self.ang_vel_z_range[env_indices, 0] = value["ang_vel_z"][0]
-                    self.ang_vel_z_range[env_indices, 1] = value["ang_vel_z"][1]
-
-            if self.cfg.random_velocity_terrain is not None:
-                for key in self.cfg.random_velocity_terrain:
-                    if key not in sub_terrain_original_names:
-                        print(f"[WARNING] Terrain type '{key}' not found in terrain generator, skipping random velocity setting.")
-                        continue
-                    terrain_type_index = sub_terrain_original_names.index(key)
-                    type_indices = np.where(sub_indices == terrain_type_index)[0]
-                    for type_indice in type_indices:
-                        env_indices = torch.where(self.terrain.terrain_types == type_indice)[0]
-                        self.random_velocity_indices[env_indices] = True
-
+        self.lin_vel_x_range[:, 0] = self.cfg.ranges.lin_vel_x[0]
+        self.lin_vel_x_range[:, 1] = self.cfg.ranges.lin_vel_x[1]
+        self.lin_vel_y_range[:, 0] = self.cfg.ranges.lin_vel_y[0]
+        self.lin_vel_y_range[:, 1] = self.cfg.ranges.lin_vel_y[1]
+        self.ang_vel_z_range[:, 0] = self.cfg.ranges.ang_vel_z[0]
+        self.ang_vel_z_range[:, 1] = self.cfg.ranges.ang_vel_z[1]
         self.random_lin_vel_x_range[:, 0] = self.cfg.ranges.lin_vel_x[0]
         self.random_lin_vel_x_range[:, 1] = self.cfg.ranges.lin_vel_x[1]
         self.random_lin_vel_y_range[:, 0] = self.cfg.ranges.lin_vel_y[0]
         self.random_lin_vel_y_range[:, 1] = self.cfg.ranges.lin_vel_y[1]
         self.random_ang_vel_z_range[:, 0] = self.cfg.ranges.ang_vel_z[0]
         self.random_ang_vel_z_range[:, 1] = self.cfg.ranges.ang_vel_z[1]
+        self._apply_velocity_ranges()
 
         # obtain the valid targets from the terrain
         if "target" not in self.terrain.flat_patches:
@@ -159,6 +121,78 @@ class PoseVelocityCommand(CommandTerm):
     Implementation specific functions.
     """
 
+    def _as_env_id_tensor(self, env_ids: Sequence[int] | torch.Tensor | None) -> torch.Tensor:
+        if env_ids is None:
+            return torch.arange(self.num_envs, device=self.device, dtype=torch.long)
+        if isinstance(env_ids, torch.Tensor):
+            return env_ids.to(device=self.device, dtype=torch.long)
+        return torch.as_tensor(env_ids, device=self.device, dtype=torch.long)
+
+    def _get_env_terrain_names(self, env_ids: torch.Tensor) -> list[str | None]:
+        terrain_names = getattr(self.terrain, "terrain_names", None)
+        if terrain_names is None:
+            generator = getattr(self.terrain, "terrain_generator", None)
+            terrain_names = getattr(generator, "terrain_names", None)
+
+        terrain_levels = self.terrain.terrain_levels[env_ids].detach().cpu().numpy()
+        terrain_types = self.terrain.terrain_types[env_ids].detach().cpu().numpy()
+
+        if terrain_names is not None:
+            names = []
+            for level, terrain_type in zip(terrain_levels, terrain_types):
+                if 0 <= level < terrain_names.shape[0] and 0 <= terrain_type < terrain_names.shape[1]:
+                    names.append(terrain_names[level, terrain_type])
+                else:
+                    names.append(None)
+            return names
+
+        terrain_type_names = getattr(self.terrain, "terrain_type_names", None)
+        if terrain_type_names is None:
+            generator = getattr(self.terrain, "terrain_generator", None)
+            terrain_type_names = getattr(generator, "terrain_type_names", None)
+
+        if terrain_type_names is None:
+            return [None for _ in terrain_types]
+        return [
+            terrain_type_names[terrain_type] if 0 <= terrain_type < len(terrain_type_names) else None
+            for terrain_type in terrain_types
+        ]
+
+    def _apply_velocity_ranges(self, env_ids: Sequence[int] | torch.Tensor | None = None):
+        env_ids = self._as_env_id_tensor(env_ids)
+        if env_ids.numel() == 0:
+            return
+
+        self.lin_vel_x_range[env_ids, 0] = self.cfg.ranges.lin_vel_x[0]
+        self.lin_vel_x_range[env_ids, 1] = self.cfg.ranges.lin_vel_x[1]
+        self.lin_vel_y_range[env_ids, 0] = self.cfg.ranges.lin_vel_y[0]
+        self.lin_vel_y_range[env_ids, 1] = self.cfg.ranges.lin_vel_y[1]
+        self.ang_vel_z_range[env_ids, 0] = self.cfg.ranges.ang_vel_z[0]
+        self.ang_vel_z_range[env_ids, 1] = self.cfg.ranges.ang_vel_z[1]
+        self.random_velocity_indices[env_ids] = False
+        if not self._velocity_ranges_by_name and not self._random_velocity_terrains:
+            return
+
+        terrain_names = self._get_env_terrain_names(env_ids)
+        for local_idx, terrain_name in enumerate(terrain_names):
+            if not terrain_name:
+                continue
+            env_id = env_ids[local_idx]
+            value = self._velocity_ranges_by_name.get(terrain_name)
+            if value is None:
+                if terrain_name not in self._missing_velocity_range_warnings:
+                    print(f"[WARNING] Terrain type '{terrain_name}' has no velocity range, using default command range.")
+                    self._missing_velocity_range_warnings.add(terrain_name)
+            else:
+                self.lin_vel_x_range[env_id, 0] = value["lin_vel_x"][0]
+                self.lin_vel_x_range[env_id, 1] = value["lin_vel_x"][1]
+                self.lin_vel_y_range[env_id, 0] = value["lin_vel_y"][0]
+                self.lin_vel_y_range[env_id, 1] = value["lin_vel_y"][1]
+                self.ang_vel_z_range[env_id, 0] = value["ang_vel_z"][0]
+                self.ang_vel_z_range[env_id, 1] = value["ang_vel_z"][1]
+            if terrain_name in self._random_velocity_terrains:
+                self.random_velocity_indices[env_id] = True
+
     def _update_metrics(self):
         # logs data
         max_command_time = self.cfg.resampling_time_range[1]
@@ -183,6 +217,8 @@ class PoseVelocityCommand(CommandTerm):
         )
 
     def _resample_command(self, env_ids: Sequence[int]):
+        self._apply_velocity_ranges(env_ids)
+
         # sample new position targets from the terrain
         ids = torch.randint(0, self.valid_targets.shape[2], size=(len(env_ids),), device=self.device)
         self.pos_command_w[env_ids] = self.valid_targets[
@@ -291,8 +327,8 @@ class PoseVelocityCommand(CommandTerm):
 
         self.vel_command_b[:, 2] = torch.clamp(
             self.vel_command_b[:, 2],
-            self.cfg.ranges.ang_vel_z[0],
-            self.cfg.ranges.ang_vel_z[1],
+            self.ang_vel_z_range[:, 0],
+            self.ang_vel_z_range[:, 1],
         )
         self.vel_command_b[:] *= (target_dist > self.cfg.target_dis_threshold).unsqueeze(-1)
         self.vel_command_b[:, :2] *= (

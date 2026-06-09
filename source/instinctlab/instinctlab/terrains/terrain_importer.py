@@ -47,6 +47,24 @@ class TerrainImporter(TerrainImporterBase):
             else None
         )
 
+    @property
+    def terrain_names(self) -> np.ndarray | None:
+        """Terrain name for each generated grid cell, indexed by [row, col]."""
+        return (
+            self.terrain_generator.terrain_names
+            if hasattr(self, "terrain_generator") and hasattr(self.terrain_generator, "terrain_names")
+            else None
+        )
+
+    @property
+    def terrain_type_names(self) -> list[str] | None:
+        """Terrain name for each terrain type/column when available."""
+        return (
+            self.terrain_generator.terrain_type_names
+            if hasattr(self, "terrain_generator") and hasattr(self.terrain_generator, "terrain_type_names")
+            else None
+        )
+
     """
     Operations - Import.
     """

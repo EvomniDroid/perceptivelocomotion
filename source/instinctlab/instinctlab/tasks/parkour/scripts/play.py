@@ -14,10 +14,24 @@ from isaaclab.app import AppLauncher
 # local imports
 import cli_args  # isort: skip
 
-# 地形名称列表（按sub_terrains顺序）
+# 地形名称列表（按 TRAINING_SUB_TERRAINS 中 dict 插入顺序，dedup 后）
+# 来源：shared_terrain_cfg.py 的 TRAINING_SUB_TERRAINS（注意 raised_mound/pit_crater 重复定义被覆盖）
 SUB_TERRAINS_KEYS = [
-    "perlin_rough", "perlin_rough_stand", "square_gaps", "pyramid_stairs", "pyramid_stairs_high",
-    "pyramid_stairs_inv", "pyramid_stairs_inv_high", "boxes", "mesh_boxes", "hf_pyramid_slope_inv"
+    "perlin_rough",
+    "perlin_rough_stand",
+    "square_gaps",
+    "pyramid_stairs",
+    "pyramid_stairs_high",
+    "pyramid_stairs_inv",
+    "pyramid_stairs_inv_high",
+    "boxes",
+    "mesh_boxes",
+    "hf_pyramid_slope_inv",
+    "square_gaps_curriculum",
+    "raised_mound",
+    "pit_crater",
+    "wave",
+    "circle_track",
 ]
 
 # num_rows和num_cols用于计算terrain_idx
@@ -52,11 +66,18 @@ parser.add_argument("--agent_cfg", action="store_true", default=False, help="从
 parser.add_argument("--sample", action="store_true", default=False, help="使用随机采样动作而非策略。")
 parser.add_argument("--zero_act_until", type=int, default=0, help="到指定步数前动作为零。")
 parser.add_argument("--keyboard_control", action="store_true", default=False, help="启用键盘控制(WASD走, QE转, X归零)。")
+parser.add_argument("--auto_policy", action="store_true", default=False, help="自动策略模式：所有 env 跑 base_velocity 命令，不接收键盘输入。")
 parser.add_argument("--keyboard_linvel_step", type=float, default=0.5, help="键盘每次调整的线速度增量。")
 parser.add_argument("--keyboard_angvel", type=float, default=1.0, help="键盘控制的最大角速度。")
 parser.add_argument("--keyboard_angvel_step", type=float, default=0.1, help="键盘每次调整的角速度增量。")
 parser.add_argument("--free_view", action="store_true", default=False, help="自由视角（不跟随机器人）。")
 parser.add_argument("--debug_ray", action="store_true", default=False, help="启用射线检测可视化。")
+parser.add_argument(
+    "--no_terminate",
+    action="store_true",
+    default=False,
+    help="放宽 play 终止条件，仅保留明显翻倒类终止，便于长时间手动测试。",
+)
 parser.add_argument("--save_depth_interval", type=int, default=0, help="每N步保存一次俯视深度图，0表示禁用。")
 parser.add_argument("--save_record_rgb_interval", type=int, default=0, help="每N步保存一次camera_rgb_record的RGB和深度图，0表示禁用。")
 parser.add_argument("--save_rgb_zhengshi_interval", type=int, default=0, help="每N步保存一次rgb_camera的RGB和深度图，0表示禁用。")
@@ -174,6 +195,14 @@ def main():
         env_cfg.scene.leg_volume_points.debug_vis = True
         env_cfg.scene.camera.debug_vis = True
 
+    if args_cli.no_terminate:
+        env_cfg.terminations.terrain_out_bound = None
+        env_cfg.terminations.root_height = None
+        env_cfg.terminations.base_contact = None
+        env_cfg.terminations.leg_link_contact = None
+        env_cfg.terminations.calf_link_contact = None
+        print("[INFO] --no_terminate: 已关闭出界/高度/link接触终止，仅保留明显翻倒类终止。")
+
     import time
     run_id = time.strftime("%Y%m%d_%H%M%S")
     save_depth_dir = None
@@ -205,6 +234,42 @@ def main():
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+
+    # 打印 play 地图布局：第几行/列是什么地形（方便键盘巡检时知道走到哪）
+    try:
+        terrain = getattr(env.unwrapped.scene, "terrain", None)
+        if terrain is not None and hasattr(terrain, "terrain_names"):
+            names_2d = terrain.terrain_names  # (num_rows, num_cols) 数组
+            num_rows, num_cols = names_2d.shape
+            print(f"[PLAY MAP] {num_rows} 行 × {num_cols} 列:")
+            if num_rows > 1:
+                print(f"[PLAY MAP] 难度按行递增: row 0 最简单, row {num_rows - 1} 最难")
+            # 按列优先打印：每一列的所有行一起
+            for col in range(num_cols):
+                col_entries = []
+                for row in range(num_rows):
+                    name = names_2d[row, col]
+                    col_entries.append(f"r{row}={name}" if name else f"r{row}=?")
+                print(f"[PLAY MAP]   col {col:>2d}: " + ", ".join(col_entries))
+        elif terrain is not None and hasattr(terrain, "terrain_type_names"):
+            # fallback：只有列名（无 row 信息）
+            col_names = terrain.terrain_type_names
+            print(f"[PLAY MAP] 列 → 地形 (总 {len(col_names)} 列):")
+            for col, name in enumerate(col_names):
+                if name:
+                    print(f"[PLAY MAP]   col {col:>2d} = {name}")
+        else:
+            terrain_types = terrain.terrain_types.cpu().numpy() if terrain is not None else None
+            if terrain_types is not None:
+                num_cols = terrain.cfg.terrain_generator.num_cols
+                print(f"[PLAY MAP] 总 {num_cols} 列 (按 curriculum 比例):")
+                for col in range(num_cols):
+                    col_ids = terrain_types[:, col]
+                    uniq = list(dict.fromkeys([int(x) for x in col_ids]))
+                    name = SUB_TERRAINS_KEYS[uniq[0]] if len(uniq) == 1 and uniq[0] < len(SUB_TERRAINS_KEYS) else f"mixed{uniq}"
+                    print(f"[PLAY MAP]   col {col:>2d} = {name}")
+    except Exception as e:
+        print(f"[PLAY MAP] 无法打印地图布局: {e}")
     # wrap for video recording
     if args_cli.video:
         video_kwargs = {
@@ -356,6 +421,31 @@ def main():
     episode_counts = {}  # track episodes per env
     num_envs = env.unwrapped.scene.num_envs
     last_debug_cmd = torch.tensor([999.0, 999.0, 999.0], device=env.device)
+
+    def summarize_termination(env_id, infos):
+        episode_info = infos.get("episode", {})
+        active_reasons = []
+        for key, value in episode_info.items():
+            if "Episode_Termination" not in key:
+                continue
+            try:
+                reason_value = float(value[env_id].item())
+            except Exception:
+                continue
+            if reason_value > 0.5:
+                active_reasons.append(f"{key}={reason_value:.3f}")
+        if active_reasons:
+            return ", ".join(active_reasons)
+
+        time_outs = infos.get("time_outs", None)
+        if time_outs is not None:
+            try:
+                if bool(time_outs[env_id].item()):
+                    return "time_outs=1.000"
+            except Exception:
+                pass
+        return "unknown"
+
     # simulate environment
     while simulation_app.is_running():
         # run everything in inference mode
@@ -391,13 +481,11 @@ def main():
             for env_id in range(num_envs):
                 if dones[env_id]:
                     episode_counts[env_id] = episode_counts.get(env_id, 0) + 1
-                    if timestep <= 10 and episode_counts.get(env_id, 1) == 1:
-                        termination_reasons = [k for k in infos.get("episode", {}).keys() if "Episode_Termination" in k]
-                        if termination_reasons:
-                            reasons_str = ", ".join([f"{k}={infos['episode'][k][env_id].item():.3f}" for k in termination_reasons])
-                            print(f"[PLAY] env {env_id} 死亡! 步数={timestep}, 终止原因: {reasons_str}")
-                        else:
-                            print(f"[PLAY] env {env_id} 死亡! 步数={timestep}")
+                    reasons_str = summarize_termination(env_id, infos)
+                    print(
+                        f"[PLAY] env {env_id} reset! episode={episode_counts[env_id]}, "
+                        f"步数={timestep}, 终止原因: {reasons_str}"
+                    )
 
             if args_cli.video:
                 env.unwrapped.render()

@@ -52,13 +52,18 @@ def terrain_out_of_bounds(
     If the actor moves too close to the edge of the terrain, the termination is activated. The distance
     to the edge of the terrain is calculated based on the size of the terrain and the distance buffer.
     """
-    if env.scene.cfg.terrain.terrain_type == "plane":
+    terrain = env.scene.terrain
+    terrain_type = env.scene.cfg.terrain.terrain_type
+    is_hacked_generator = getattr(terrain, "_hacked_terrain_type", None) == "hacked_generator"
+    has_generator_map = getattr(terrain, "terrain_generator", None) is not None
+
+    if terrain_type == "plane" and not (is_hacked_generator or has_generator_map):
         return torch.zeros(
             (env.num_envs,), device=env.device, dtype=torch.bool
         )  # we have infinite terrain because it is a plane
-    elif env.scene.cfg.terrain.terrain_type == "generator":
+    elif terrain_type == "generator" or is_hacked_generator or has_generator_map:
         # obtain the size of the sub-terrains
-        terrain_gen_cfg = env.scene.terrain.cfg.terrain_generator
+        terrain_gen_cfg = terrain.cfg.terrain_generator
         grid_width, grid_length = terrain_gen_cfg.size
         n_rows, n_cols = terrain_gen_cfg.num_rows, terrain_gen_cfg.num_cols
         border_width = terrain_gen_cfg.border_width
