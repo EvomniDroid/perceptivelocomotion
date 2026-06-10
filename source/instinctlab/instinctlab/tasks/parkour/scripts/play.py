@@ -31,7 +31,6 @@ SUB_TERRAINS_KEYS = [
     "raised_mound",
     "pit_crater",
     "wave",
-    "circle_track",
 ]
 
 # num_rows和num_cols用于计算terrain_idx

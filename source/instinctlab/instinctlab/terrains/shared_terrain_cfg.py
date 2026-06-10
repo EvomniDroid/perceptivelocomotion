@@ -1071,21 +1071,6 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
             ),
         },
     ),
-    "circle_track": PerlinCircleTrackTerrainCfg(
-        proportion=0.10,
-        track_radius=(3.0, 6.0),
-        track_width=1.5,
-        track_depth=(0.1, 0.3),
-        center_size=2.0,
-        perlin_cfg=PerlinPlaneTerrainCfg(
-            noise_scale=0.02,
-            noise_frequency=20,
-            fractal_octaves=2,
-            fractal_lacunarity=2.0,
-            fractal_gain=0.25,
-            centering=True,
-        ),
-    ),
 })
 
 

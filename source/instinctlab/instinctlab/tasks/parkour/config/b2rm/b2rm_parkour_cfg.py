@@ -523,7 +523,6 @@ class B2RMCommandsCfg:
             "raised_mound": {"lin_vel_x": (0.0, 0.9), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.15, 0.15)},
             "pit_crater": {"lin_vel_x": (0.0, 0.9), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.15, 0.15)},
             "wave": {"lin_vel_x": (0.0, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.6, 0.6)},
-            "circle_track": {"lin_vel_x": (0.0, 0.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-1.0, 1.0)},
         },
         lin_vel_threshold=0.0,
         ang_vel_threshold=0.0,
