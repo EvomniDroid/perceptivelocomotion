@@ -77,6 +77,24 @@ parser.add_argument(
     default=False,
     help="放宽 play 终止条件，仅保留明显翻倒类终止，便于长时间手动测试。",
 )
+parser.add_argument(
+    "--play_row",
+    type=int,
+    default=None,
+    help="指定出生在第 N 行（覆盖 max_init_terrain_level）。仅 num_envs=1 时生效。",
+)
+parser.add_argument(
+    "--play_col",
+    type=int,
+    default=None,
+    help="指定出生在第 N 列（0 ~ num_cols-1）。仅 num_envs=1 时生效。",
+)
+parser.add_argument(
+    "--play_terrain",
+    type=str,
+    default=None,
+    help="按地形名指定出生列（如 raised_mound / circle_track）。仅 num_envs=1 时生效。",
+)
 parser.add_argument("--save_depth_interval", type=int, default=0, help="每N步保存一次俯视深度图，0表示禁用。")
 parser.add_argument("--save_record_rgb_interval", type=int, default=0, help="每N步保存一次camera_rgb_record的RGB和深度图，0表示禁用。")
 parser.add_argument("--save_rgb_zhengshi_interval", type=int, default=0, help="每N步保存一次rgb_camera的RGB和深度图，0表示禁用。")
@@ -233,6 +251,83 @@ def main():
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+
+    # 处理 --play_row / --play_col / --play_terrain：把单 env 重定位到指定网格
+    if env_cfg.scene.num_envs == 1 and (
+        args_cli.play_row is not None
+        or args_cli.play_col is not None
+        or args_cli.play_terrain is not None
+    ):
+        try:
+            terrain = env.unwrapped.scene.terrain
+            if not hasattr(terrain, "env_origins"):
+                raise RuntimeError("terrain has no env_origins")
+
+            num_rows = int(terrain.cfg.terrain_generator.num_rows)
+            num_cols = int(terrain.cfg.terrain_generator.num_cols)
+
+            # 默认 row = 0, col = 0
+            target_row = 0 if args_cli.play_row is None else int(args_cli.play_row)
+            target_col = 0 if args_cli.play_col is None else int(args_cli.play_col)
+
+            # --play_terrain 按名查 col（取第一个匹配列）
+            if args_cli.play_terrain is not None:
+                if hasattr(terrain, "terrain_names"):
+                    names_2d = terrain.terrain_names
+                    matched_cols = [
+                        c for c in range(num_cols) if any(names_2d[r, c] == args_cli.play_terrain for r in range(num_rows))
+                    ]
+                    if not matched_cols:
+                        raise RuntimeError(
+                            f"--play_terrain={args_cli.play_terrain!r} not found in terrain_names; "
+                            f"available: {sorted(set(names_2d.flatten().tolist()))}"
+                        )
+                    target_col = matched_cols[0]
+                else:
+                    raise RuntimeError("terrain.terrain_names not available; cannot resolve --play_terrain")
+
+            # 边界检查
+            if not (0 <= target_row < num_rows):
+                raise RuntimeError(f"--play_row={target_row} 越界, 合法范围 [0, {num_rows - 1}]")
+            if not (0 <= target_col < num_cols):
+                raise RuntimeError(f"--play_col={target_col} 越界, 合法范围 [0, {num_cols - 1}]")
+
+            # Isaac Lab env_origins 形状是 (num_envs, 3)，单 env 覆盖 env 0
+            # terrain.terrain_origins 是 (num_rows, num_cols, 3)，但 curriculum=True 时
+            # env_origins[i] = terrain_origins[terrain_levels[i], terrain_types[i]]
+            # 我们直接覆写 env 0 的 origin 为目标 (row, col) 处的世界坐标
+            if hasattr(terrain, "terrain_origins") and terrain.terrain_origins is not None:
+                new_origin = terrain.terrain_origins[target_row, target_col].clone()
+            else:
+                # fallback: 用 env_spacing 算
+                new_origin = torch.tensor(
+                    [
+                        -(target_row - (num_rows - 1) / 2) * env_cfg.scene.env_spacing,
+                        (target_col - (num_cols - 1) / 2) * env_cfg.scene.env_spacing,
+                        0.0,
+                    ],
+                    device=terrain.env_origins.device,
+                    dtype=terrain.env_origins.dtype,
+                )
+            # env_origins 形状 (num_envs, 3)，单 env 覆盖 env 0
+            terrain.env_origins[0] = new_origin
+            # 同步 terrain_levels[0] / terrain_types[0]，避免 curriculum 逻辑把它改回去
+            if hasattr(terrain, "terrain_levels") and terrain.terrain_levels is not None:
+                terrain.terrain_levels[0] = target_row
+            if hasattr(terrain, "terrain_types") and terrain.terrain_types is not None:
+                terrain.terrain_types[0] = target_col
+
+            # 打印定位信息
+            if hasattr(terrain, "terrain_names"):
+                tname = terrain.terrain_names[target_row, target_col]
+            else:
+                tname = "?"
+            print(
+                f"[PLAY LOC] 重定位单 env: row={target_row}, col={target_col}, "
+                f"terrain={tname}, origin={new_origin.tolist()}"
+            )
+        except Exception as e:
+            print(f"[PLAY LOC] 重定位失败: {e}")
 
     # 打印 play 地图布局：第几行/列是什么地形（方便键盘巡检时知道走到哪）
     try:

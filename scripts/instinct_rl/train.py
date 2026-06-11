@@ -8,9 +8,11 @@
 """首先启动 Isaac Sim 模拟器。"""
 
 import argparse
+import copy
 import multiprocessing as mp
 import os
 import sys
+from collections import OrderedDict
 
 from isaaclab.app import AppLauncher
 
@@ -45,6 +47,13 @@ parser.add_argument("--debug", action="store_true", default=False, help="Enable 
 # train.py 专属参数
 parser.add_argument("--cprofile", action="store_true", default=False, help="Enable cProfile.")
 parser.add_argument("--stage2_at", type=int, default=10000, help="在 N 轮后从平地切换到全地形（0=禁用两阶段）")
+parser.add_argument(
+    "--stage2_plan",
+    type=str,
+    default="full",
+    choices=("full", "mound_pit"),
+    help="阶段2训练计划：full=全地形；mound_pit=仅训练凸台+坑专项。",
+)
 # 附加 Instinct-RL 的命令行参数
 cli_args.add_instinct_rl_args(parser)
 # 附加 AppLauncher 的命令行参数
@@ -131,6 +140,52 @@ def _get_remaining_iterations(current_iteration: int, target_iteration: int) -> 
     return max(target_iteration - current_iteration, 0)
 
 
+def _clone_subterrains_by_keys(keys: list[str]) -> OrderedDict:
+    """从训练地形中按 key 挑出一个独立的子集，避免就地改坏全局配置。"""
+    return OrderedDict((key, copy.deepcopy(TRAINING_SUB_TERRAINS[key])) for key in keys)
+
+
+def _build_stage2_plan_subterrains(plan_name: str) -> OrderedDict:
+    if plan_name == "full":
+        return copy.deepcopy(TRAINING_SUB_TERRAINS)
+    if plan_name == "mound_pit":
+        sub_terrains = _clone_subterrains_by_keys(["perlin_rough", "raised_mound", "pit_crater"])
+        sub_terrains["perlin_rough"].proportion = 0.2
+        sub_terrains["raised_mound"].proportion = 0.4
+        sub_terrains["pit_crater"].proportion = 0.4
+        return sub_terrains
+    raise ValueError(f"Unknown stage2 plan: {plan_name}")
+
+
+def _apply_stage2_plan_overrides(env_cfg, plan_name: str):
+    """按专项计划覆写阶段2训练配置。
+
+    设计原则：
+    - full: 保持当前 stage2 逻辑不变
+    - mound_pit: 聚焦凸台/坑，降低初始难度和速度上限，让策略先学会过障再学更快
+    """
+    env_cfg.scene.terrain.terrain_generator.sub_terrains = _build_stage2_plan_subterrains(plan_name)
+
+    if plan_name == "full":
+        return "全地形 stage2"
+
+    if plan_name == "mound_pit":
+        env_cfg.scene.terrain.max_init_terrain_level = min(getattr(env_cfg.scene.terrain, "max_init_terrain_level", 3), 2)
+
+        base_velocity = getattr(env_cfg.commands, "base_velocity", None)
+        if base_velocity is not None and hasattr(base_velocity, "velocity_ranges"):
+            if "raised_mound" in base_velocity.velocity_ranges:
+                base_velocity.velocity_ranges["raised_mound"]["lin_vel_x"] = (0.0, 0.6)
+                base_velocity.velocity_ranges["raised_mound"]["ang_vel_z"] = (-0.08, 0.08)
+            if "pit_crater" in base_velocity.velocity_ranges:
+                base_velocity.velocity_ranges["pit_crater"]["lin_vel_x"] = (0.0, 0.5)
+                base_velocity.velocity_ranges["pit_crater"]["ang_vel_z"] = (-0.08, 0.08)
+
+        return "凸台+坑专项 stage2"
+
+    raise ValueError(f"Unknown stage2 plan: {plan_name}")
+
+
 @hydra_task_config(args_cli.task, "instinct_rl_cfg_entry_point")
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: InstinctRlOnPolicyRunnerCfg):
     """使用 Instinct-RL 智能体进行训练主函数。"""
@@ -175,6 +230,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         log_root_path = args_cli.logroot
 
     print(f"[INFO] 将实验记录到以下目录: {log_root_path}")
+    print(f"[INFO] 阶段2计划: {args_cli.stage2_plan}")
     # 指定每次运行所在的日志目录名字格式: {时间戳}_{运行名称}
     log_dir = datetime.now().strftime("%Y%m%d_%H%M%S")
     if getattr(env_cfg, "run_name", None):
@@ -186,6 +242,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             log_dir += h_args.split("=")[0].split(".")[-1]
             log_dir += "-"
             log_dir += h_args.split("=")[1]
+    if args_cli.stage2_plan != "full":
+        log_dir += f"_stage2-{args_cli.stage2_plan}"
     log_dir = os.path.join(log_root_path, log_dir)
 
     if agent_cfg.resume:
@@ -202,7 +260,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     stage2_at = args_cli.stage2_at
     is_resuming = agent_cfg.resume
     resume_iter = 0
-    saved_sub_terrains = env_cfg.scene.terrain.terrain_generator.sub_terrains
+    saved_sub_terrains = copy.deepcopy(TRAINING_SUB_TERRAINS)
+    stage2_plan_desc = "全地形 stage2"
 
     if is_resuming:
         resume_iter = _get_checkpoint_iteration(resume_path)
@@ -215,10 +274,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         stage2_mode = True
     else:
         stage2_mode = False
+        stage2_plan_desc = _apply_stage2_plan_overrides(env_cfg, args_cli.stage2_plan)
         if stage2_at <= 0:
-            print("[训练] 单阶段模式: 直接使用全地形训练")
+            print(f"[训练] 单阶段模式: 直接使用 {stage2_plan_desc}")
         else:
-            print(f"[训练] 当前 checkpoint 已达到/超过 stage1 目标轮数 {stage2_at}: 直接进入阶段2")
+            print(f"[训练] 当前 checkpoint 已达到/超过 stage1 目标轮数 {stage2_at}: 直接进入{stage2_plan_desc}")
 
     # 创建 isaac 仿真环境
     print("进入环境构造")
@@ -285,8 +345,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
         # ---- 阶段2: 全地形 ----
         stage2_remaining = _get_remaining_iterations(stage1_target_iter, agent_cfg.max_iterations)
-        print(f"[两阶段] 阶段2: 切换到全地形训练，目标总轮数 {agent_cfg.max_iterations}，剩余 {stage2_remaining} 轮")
-        env_cfg.scene.terrain.terrain_generator.sub_terrains = saved_sub_terrains
+        stage2_plan_desc = _apply_stage2_plan_overrides(env_cfg, args_cli.stage2_plan)
+        print(f"[两阶段] 阶段2: 切换到{stage2_plan_desc}，目标总轮数 {agent_cfg.max_iterations}，剩余 {stage2_remaining} 轮")
         env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
         if isinstance(env.unwrapped, DirectMARLEnv):
             env = multi_agent_to_single_agent(env)
