@@ -132,6 +132,8 @@ class PerlinPitTerrainCfg(HfTerrainBaseCfg, WallTerrainCfgMixin):
     function = hf_terrains.perlin_pit_terrain
     pit_depth: tuple[float, float] | float = (0.05, 1.0)  # depth of the pit (5cm to 100cm below ground)
     pit_radius: tuple[float, float] | float = (0.5, 1.5)  # radius of the pit
+    raise_surrounding_ground: bool = False
+    """Whether to raise the surrounding ground by the pit depth, so the pit bottom stays near ground height."""
     perlin_cfg: PerlinPlaneTerrainCfg | None = None
 
 

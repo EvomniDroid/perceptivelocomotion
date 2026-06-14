@@ -51,8 +51,8 @@ parser.add_argument(
     "--stage2_plan",
     type=str,
     default="full",
-    choices=("full", "mound_pit"),
-    help="阶段2训练计划：full=全地形；mound_pit=仅训练凸台+坑专项。",
+    choices=("full", "mound_pit", "pit_only"),
+    help="阶段2训练计划：full=全地形；mound_pit=凸台+坑专项；pit_only=仅训练出坑专项。",
 )
 # 附加 Instinct-RL 的命令行参数
 cli_args.add_instinct_rl_args(parser)
@@ -154,6 +154,11 @@ def _build_stage2_plan_subterrains(plan_name: str) -> OrderedDict:
         sub_terrains["raised_mound"].proportion = 0.4
         sub_terrains["pit_crater"].proportion = 0.4
         return sub_terrains
+    if plan_name == "pit_only":
+        sub_terrains = _clone_subterrains_by_keys(["perlin_rough", "pit_crater"])
+        sub_terrains["perlin_rough"].proportion = 0.2
+        sub_terrains["pit_crater"].proportion = 0.8
+        return sub_terrains
     raise ValueError(f"Unknown stage2 plan: {plan_name}")
 
 
@@ -182,6 +187,26 @@ def _apply_stage2_plan_overrides(env_cfg, plan_name: str):
                 base_velocity.velocity_ranges["pit_crater"]["ang_vel_z"] = (-0.08, 0.08)
 
         return "凸台+坑专项 stage2"
+
+    if plan_name == "pit_only":
+        env_cfg.scene.terrain.max_init_terrain_level = min(getattr(env_cfg.scene.terrain, "max_init_terrain_level", 3), 2)
+
+        base_velocity = getattr(env_cfg.commands, "base_velocity", None)
+        if base_velocity is not None and hasattr(base_velocity, "velocity_ranges"):
+            if "pit_crater" in base_velocity.velocity_ranges:
+                base_velocity.velocity_ranges["pit_crater"]["lin_vel_x"] = (0.2, 0.5)
+                base_velocity.velocity_ranges["pit_crater"]["ang_vel_z"] = (-0.08, 0.08)
+            if "perlin_rough" in base_velocity.velocity_ranges:
+                base_velocity.velocity_ranges["perlin_rough"]["lin_vel_x"] = (0.2, 0.6)
+
+        # 仅在出坑专项里做轻微放宽，验证高课程是否存在“出生即死”。
+        # 保持改动保守，避免把专项直接训成依赖拖腿/塌身存活。
+        terminations = getattr(env_cfg, "terminations", None)
+        if terminations is not None:
+            if hasattr(terminations, "calf_link_contact") and hasattr(terminations.calf_link_contact, "params"):
+                terminations.calf_link_contact.params["threshold"] = 50.0
+
+        return "仅出坑专项 stage2"
 
     raise ValueError(f"Unknown stage2 plan: {plan_name}")
 

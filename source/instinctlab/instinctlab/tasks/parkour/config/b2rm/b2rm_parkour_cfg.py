@@ -512,7 +512,6 @@ class B2RMCommandsCfg:
             "perlin_rough": {"lin_vel_x": (0.0, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.8, 0.8)},
             "perlin_rough_stand": {"lin_vel_x": (0.0, 0.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (0.0, 0.0)},
             "square_gaps": {"lin_vel_x": (0.0, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.5, 0.5)},
-            "square_gaps_curriculum": {"lin_vel_x": (0.0, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.5, 0.5)},
             "pyramid_stairs": {"lin_vel_x": (0.0, 0.70), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.08, 0.08)},
             "pyramid_stairs_high": {"lin_vel_x": (0.0, 0.60), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.06, 0.06)},
             "pyramid_stairs_inv": {"lin_vel_x": (0.0, 0.70), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.08, 0.08)},
@@ -693,6 +692,8 @@ for sub_terrain_name, sub_terrain_cfg in ROUGH_TERRAINS_CFG_PLAY.sub_terrains.it
 class B2RMParkourEnvCfg_PLAY(B2RMParkourEnvCfg):
     def __post_init__(self):
         super().__post_init__()
+        # play 只用于人工巡检，不需要训练期的 terrain curriculum 在 reset 时再改行号。
+        self.curriculum.terrain_levels = None
         self.scene.terrain.terrain_generator = ROUGH_TERRAINS_CFG_PLAY
         # 等比例行×列 = 16 列（每种地形至少一列） × 1 行
         n_terrains = len(ROUGH_TERRAINS_CFG_PLAY.sub_terrains)
@@ -708,8 +709,8 @@ class B2RMParkourEnvCfg_PLAY(B2RMParkourEnvCfg):
         self.terminations.base_height = None
         self.terminations.base_contact = None
         if self.scene.terrain.terrain_generator is not None:
-            # 6 行 × N 列：每列固定一种地形；play 时按行固定难度，便于人工巡检。
-            self.scene.terrain.terrain_generator.num_rows = 6
+            # 10 行 × N 列：每列固定一种地形；play 时按行固定难度，便于人工巡检。
+            self.scene.terrain.terrain_generator.num_rows = 10
             self.scene.terrain.terrain_generator.num_cols = n_terrains
             self.scene.terrain.terrain_generator.curriculum = True
             self.scene.terrain.terrain_generator.deterministic_curriculum_rows = True

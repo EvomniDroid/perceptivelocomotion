@@ -784,9 +784,13 @@ def perlin_pit_terrain(difficulty: float, cfg: hf_terrains_cfg.PerlinPitTerrainC
     # compute distance from center
     dist = np.sqrt((X - center_x)**2 + (Y - center_y)**2)
 
-    # create pit: flat bottom with vertical walls (90-degree drop below ground)
-    hf_raw = np.zeros((width_pixels, length_pixels))
-    hf_raw[dist < pit_radius_px] = -pit_depth_px  # negative height (below ground)
+    # Optionally raise the surrounding terrain so the pit is carved from an elevated platform.
+    # This keeps the pit bottom near the global ground plane while preserving the relative climb-out height.
+    surrounding_height_px = pit_depth_px if getattr(cfg, "raise_surrounding_ground", False) else 0
+
+    # create pit: flat bottom with vertical walls
+    hf_raw = np.full((width_pixels, length_pixels), surrounding_height_px, dtype=np.float32)
+    hf_raw[dist < pit_radius_px] = surrounding_height_px - pit_depth_px
 
     # add perlin noise if configured
     if cfg.perlin_cfg is not None:

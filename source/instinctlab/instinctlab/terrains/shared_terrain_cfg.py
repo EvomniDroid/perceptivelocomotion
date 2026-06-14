@@ -747,7 +747,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
     "square_gaps": PerlinSquareGapTerrainCfg(
-        proportion=0.10,
+        proportion=0.08,
         gap_distance_range=(0.1, 0.7),
         gap_depth=(0.4, 0.6),
         platform_width=1.5,
@@ -766,7 +766,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
     "pyramid_stairs": PerlinPyramidStairsTerrainCfg(
-        proportion=0.18,
+        proportion=0.12,
         step_height_range=(0.05, 0.23),
         step_width=0.3,
         platform_width=1.5,
@@ -793,7 +793,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
     "pyramid_stairs_high": PerlinPyramidStairsTerrainCfg(
-        proportion=0.04,
+        proportion=0.03,
         step_height_range=(0.05, 0.32),
         step_width=1.5,
         platform_width=4.0,
@@ -820,7 +820,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
     "pyramid_stairs_inv": PerlinInvertedPyramidStairsTerrainCfg(
-        proportion=0.18,
+        proportion=0.12,
         step_height_range=(0.05, 0.23),
         step_width=0.3,
         platform_width=1.5,
@@ -847,7 +847,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
     "pyramid_stairs_inv_high": PerlinInvertedPyramidStairsTerrainCfg(
-        proportion=0.04,
+        proportion=0.03,
         step_height_range=(0.05, 0.32),
         step_width=1.5,
         platform_width=4.0,
@@ -874,7 +874,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
     "boxes": PerlinDiscreteObstaclesTerrainCfg(
-        proportion=0.10,
+        proportion=0.09,
         num_obstacles=20,
         obstacle_height_mode="fixed",
         obstacle_width_range=(0.8, 1.5),
@@ -899,7 +899,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
     "mesh_boxes": PerlinMeshRandomMultiBoxTerrainCfg(
-        proportion=0.10,
+        proportion=0.14,
         box_height_mean=(0.1, 0.4),
         box_height_range=0.05,
         box_length_mean=0.4,
@@ -917,7 +917,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
     "hf_pyramid_slope_inv": PerlinInvertedPyramidSlopedTerrainCfg(
-        proportion=0.10,
+        proportion=0.06,
         slope_range=(0.0, 0.7),
         platform_width=1.5,
         border_width=0.3,
@@ -938,25 +938,8 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
             ),
         },
     ),
-    "square_gaps_curriculum": PerlinSquareGapTerrainCfg(
-        proportion=0.10,
-        gap_distance_range=(0.3, 0.8),
-        gap_depth=(0.1, 0.8),
-        platform_width=1.5,
-        border_width=0.3,
-        wall_prob=[0.0, 0.0, 0.0, 0.0],
-        wall_height=5.0,
-        wall_thickness=0.05,
-        flat_patch_sampling={
-            "target": FlatPatchSamplingCfg(
-                num_patches=10,
-                patch_radius=[0.05, 0.10, 0.15, 0.20],
-                max_height_diff=0.1,
-            ),
-        },
-    ),
     "raised_mound": PerlinBowlPitTerrainCfg(
-        proportion=0.10,
+        proportion=0.18,
         pit_depth=(0.05, 1.0),
         pit_radius=(1.0, 1.0),
         wall_prob=[0.0, 0.0, 0.0, 0.0],
@@ -981,9 +964,10 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
     "pit_crater": PerlinPitTerrainCfg(
-        proportion=0.10,
+        proportion=0.18,
         pit_depth=(0.05, 1.0),
         pit_radius=(1.0, 1.0),
+        raise_surrounding_ground=True,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
         wall_thickness=0.05,
@@ -1006,7 +990,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
     "raised_mound": PerlinBowlPitTerrainCfg(
-        proportion=0.10,
+        proportion=0.18,
         pit_depth=(0.05, 1.0),
         pit_radius=(1.0, 1.0),
         wall_prob=[0.0, 0.0, 0.0, 0.0],
@@ -1031,9 +1015,10 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
     "pit_crater": PerlinPitTerrainCfg(
-        proportion=0.10,
+        proportion=0.18,
         pit_depth=(0.05, 1.0),
         pit_radius=(1.0, 1.0),
+        raise_surrounding_ground=True,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
         wall_height=5.0,
         wall_thickness=0.05,
@@ -1056,7 +1041,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
     "wave": PerlinWaveTerrainCfg(
-        proportion=0.10,
+        proportion=0.06,
         amplitude_range=(0.1, 0.3),
         num_waves=3,
         border_width=0.0,
