@@ -15,10 +15,11 @@ from instinctlab.managers import MultiRewardCfg
 from instinctlab.monitors import FootStatMonitorTerm, MonitorTermCfg
 from instinctlab.tasks.parkour.config.parkour_env_cfg import CurriculumCfg
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
+from isaaclab.sensors import CameraCfg, ContactSensorCfg, RayCasterCfg, patterns
 from isaaclab.sensors.ray_caster.patterns import PinholeCameraPatternCfg
 from isaaclab.assets import AssetBaseCfg
 import isaaclab.sim as sim_utils
+from isaaclab.sim.spawners.sensors import PinholeCameraCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 
@@ -148,7 +149,7 @@ class B2RMSceneCfg(InteractiveSceneCfg):
         update_period=0.02,
         depth_clipping_behavior="max",
         offset=NoisyGroupedRayCasterCameraCfg.OffsetCfg(
-            pos=(0.0, 0.0, 0.3),
+            pos=(0.41251, 0.024997, 0.04765),
             rot=(0.9135367613482678, 0.004363309284746571, 0.4067366430758002, 0.0),
             convention="world",
         ),
@@ -163,6 +164,24 @@ class B2RMSceneCfg(InteractiveSceneCfg):
             ),
         },
         data_histories={"distance_to_image_plane_noised": 37},
+    )
+
+    rgb_camera = CameraCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/base_link/rgb_camera",
+        spawn=PinholeCameraCfg(
+            focal_length=24.0,
+            horizontal_aperture=20.955,
+            clipping_range=(0.01, 1e6),
+        ),
+        width=640,
+        height=360,
+        offset=CameraCfg.OffsetCfg(
+            pos=(0.41251, 0.024997, 0.05765),
+            rot=(0.9135367613482678, 0.004363309284746571, 0.4067366430758002, 0.0),
+            convention="world",
+        ),
+        data_types=["rgb", "distance_to_image_plane"],
+        update_period=0.02,
     )
 
     leg_volume_points = VolumePointsCfg(

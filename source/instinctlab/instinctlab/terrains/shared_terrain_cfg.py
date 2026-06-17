@@ -760,7 +760,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
                 num_patches=10,
                 patch_radius=[0.05, 0.10, 0.15, 0.20],
                 max_height_diff=0.1,
-                x_range=(3.7, 3.7),
+                x_range=(0.0, 0.0),
                 y_range=(-0.0, 0.0),
             ),
         },
@@ -787,7 +787,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
                 num_patches=10,
                 patch_radius=[0.05, 0.10, 0.15, 0.20],
                 max_height_diff=0.1,
-                x_range=(3.7, 3.7),
+                x_range=(0.0, 0.0),
                 y_range=(-0.0, 0.0),
             ),
         },
@@ -814,7 +814,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
                 num_patches=10,
                 patch_radius=[0.05, 0.10, 0.15, 0.20],
                 max_height_diff=0.1,
-                x_range=(3.7, 3.7),
+                x_range=(0.0, 0.0),
                 y_range=(-0.0, 0.0),
             ),
         },
@@ -894,7 +894,11 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         ),
         flat_patch_sampling={
             "target": FlatPatchSamplingCfg(
-                num_patches=10, patch_radius=[0.05, 0.10, 0.15, 0.20], max_height_diff=0.1
+                num_patches=10,
+                patch_radius=[0.05, 0.10, 0.15, 0.20],
+                max_height_diff=0.1,
+                x_range=(0.0, 0.0),
+                y_range=(-0.0, 0.0),
             ),
         },
     ),
@@ -913,7 +917,13 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         wall_height=5.0,
         wall_thickness=0.05,
         flat_patch_sampling={
-            "target": FlatPatchSamplingCfg(num_patches=10, patch_radius=[0.05, 0.10, 0.15], max_height_diff=0.1),
+            "target": FlatPatchSamplingCfg(
+                num_patches=10,
+                patch_radius=[0.05, 0.10, 0.15],
+                max_height_diff=0.1,
+                x_range=(0.0, 0.0),
+                y_range=(-0.0, 0.0),
+            ),
         },
     ),
     "hf_pyramid_slope_inv": PerlinInvertedPyramidSlopedTerrainCfg(
