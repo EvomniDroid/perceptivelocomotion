@@ -305,6 +305,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         else:
             print(f"[训练] 当前 checkpoint 已达到/超过 stage1 目标轮数 {stage2_at}: 直接进入{stage2_plan_desc}")
 
+    # The policy depth input uses a ray-caster camera, which does not require Isaac's rendered camera backend.
+    # Disable rendered RGB cameras during normal training unless video recording explicitly needs them.
+    if not args_cli.video:
+        if hasattr(env_cfg.scene, "rgb_camera"):
+            env_cfg.scene.rgb_camera = None
+            print("[INFO] Disabled scene.rgb_camera for training; raycaster depth camera remains enabled.")
+        if hasattr(env_cfg.scene, "camera_rgb_record"):
+            env_cfg.scene.camera_rgb_record = None
+            print("[INFO] Disabled scene.camera_rgb_record for training.")
+
     # 创建 isaac 仿真环境
     print("进入环境构造")
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
