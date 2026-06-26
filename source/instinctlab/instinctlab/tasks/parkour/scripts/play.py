@@ -498,28 +498,34 @@ def main():
         from onnxer import load_parkour_onnx_model
 
         # NOTE: This is only applicable with parkour task
+        obs_segments = env.get_obs_segments()
+        proprio_components = [
+            component
+            for component in [
+                "base_lin_vel",
+                "base_ang_vel",
+                "projected_gravity",
+                "velocity_commands",
+                "joint_pos",
+                "joint_vel",
+                "actions",
+            ]
+            if component in obs_segments
+        ]
         onnx_policy = load_parkour_onnx_model(
             model_dir=os.path.join(log_dir, "exported"),
             get_subobs_func=lambda obs: get_subobs_by_components(
                 obs,
                 agent_cfg.policy.encoder_configs.depth_encoder.component_names,
-                env.get_obs_segments(),
+                obs_segments,
                 temporal=True,
             ),
-            depth_shape=env.get_obs_segments()["depth_image"],
+            depth_shape=obs_segments["depth_image"],
             proprio_slice=slice(
                 0,
                 get_subobs_size(
-                    env.get_obs_segments(),
-                    [
-                        "base_lin_vel",
-                        "base_ang_vel",
-                        "projected_gravity",
-                        "velocity_commands",
-                        "joint_pos",
-                        "joint_vel",
-                        "actions",
-                    ],
+                    obs_segments,
+                    proprio_components,
                 ),
             ),
         )
@@ -593,7 +599,7 @@ def main():
 
     # 获取obs切片信息，用于打印实际速度
     obs_segments = env.get_obs_segments()
-    vel_slice = get_obs_slice(obs_segments, "base_lin_vel")
+    vel_slice = get_obs_slice(obs_segments, "base_lin_vel") if "base_lin_vel" in obs_segments else None
 
     # reset environment
     obs, _ = env.get_observations()
@@ -650,7 +656,7 @@ def main():
 
             # 打印实际速度 vs 命令速度（命令变化时或每200步）
             cmd_changed = not torch.allclose(override_command[0], last_debug_cmd, atol=1e-4)
-            if args_cli.keyboard_control and (cmd_changed or timestep % 200 == 0):
+            if args_cli.keyboard_control and vel_slice is not None and (cmd_changed or timestep % 200 == 0):
                 vel_start = vel_slice[0].start if isinstance(vel_slice[0], slice) else vel_slice[0]
                 actual_vel = obs[0, vel_start:vel_start+3].cpu()
                 cmd = override_command[0].cpu()
