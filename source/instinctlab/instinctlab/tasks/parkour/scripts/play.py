@@ -314,6 +314,20 @@ def main():
         print(f"[INFO] Saving rgb_camera to: {save_rgb_zhengshi_dir}")
         print(f"[INFO] Will save every {args_cli.save_rgb_zhengshi_interval} steps")
 
+    needs_rendered_camera = (
+        args_cli.video
+        or args_cli.save_rgb_zhengshi_interval > 0
+        or args_cli.show_first_person_rgbd
+        or args_cli.first_person_depth_source == "rgb_camera"
+    )
+    if not needs_rendered_camera:
+        if hasattr(env_cfg.scene, "rgb_camera"):
+            env_cfg.scene.rgb_camera = None
+            print("[INFO] Disabled scene.rgb_camera for play/export; raycaster depth camera remains enabled.")
+        if hasattr(env_cfg.scene, "camera_rgb_record"):
+            env_cfg.scene.camera_rgb_record = None
+            print("[INFO] Disabled scene.camera_rgb_record for play/export.")
+
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
