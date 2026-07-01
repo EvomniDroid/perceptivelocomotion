@@ -35,6 +35,7 @@ simulation_app = app_launcher.app
 
 from isaaclab.sim import SimulationContext, SimulationCfg
 import isaaclab.sim as sim_utils
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from instinctlab.terrains.terrain_importer import TerrainImporter
 from instinctlab.terrains.terrain_importer_cfg import TerrainImporterCfg
 from instinctlab.terrains.shared_terrain_cfg import MY_TERRAIN_CFG
@@ -76,9 +77,11 @@ def main():
     sim = SimulationContext(SimulationCfg())
     sim.set_camera_view(eye=(5.0, 8.0, 8.0), target=(5.0, 0.0, -2.0))
 
-    cfg = sim_utils.DistantLightCfg(intensity=1200.0, exposure=5.0, color=(1.0, 1.0, 1.0))
-
-    cfg.func("/World/Light", cfg)
+    cfg = sim_utils.DomeLightCfg(
+        intensity=750.0,
+        texture_file=f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
+    )
+    cfg.func("/World/skyLight", cfg)
 
     print(f"[INFO] Generating terrain at level {args_cli.terrain_level}...")
     terrain_importer = TerrainImporter(cfg=MY_TERRAIN_IMPORTER_CFG)
