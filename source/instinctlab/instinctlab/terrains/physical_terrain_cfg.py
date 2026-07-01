@@ -19,7 +19,7 @@ import isaaclab.sim as sim_utils
 from instinctlab.terrains.terrain_generator import FiledTerrainGenerator
 from instinctlab.terrains.terrain_generator_cfg import FiledTerrainGeneratorCfg
 
-from .shared_terrain_cfg import SHARED_SUB_TERRAINS, _terrain_layout_to_ordered_dict
+from .shared_terrain_cfg import SHARED_SUB_TERRAINS, TRAINING_SUB_TERRAINS
 
 
 # Keep the base geometric terrain vocabulary separate from training-only variants.
@@ -34,20 +34,48 @@ PHYSICAL_STUDY_TERRAIN_NAMES = [
     "pyramid_slope",
     "pyramid_slope_inv",
     "discrete_obstacles",
+    "boxes",
+    "mesh_boxes",
+    "mesh_boxes_dense",
     "stepping_stones",
     "tilt",
     "gutter",
 ]
 
+PHYSICAL_COMPARISON_MATERIAL_NAMES = [
+    "default",
+    "low_friction",
+    "springy",
+    "high_grip",
+    "slippery_bouncy",
+    "damped_soft_like",
+]
+
+PHYSICAL_DYNAMIC_ARENA_NAMES = [
+    "stability_dynamic_support",
+    "looseness_dynamic_rubble",
+    "looseness_dense_small_rubble",
+]
+
+PHYSICAL_DISPLAY_TERRAIN_NAMES = PHYSICAL_STUDY_TERRAIN_NAMES + PHYSICAL_DYNAMIC_ARENA_NAMES
+
 
 def _make_visualization_sub_terrains(names: list[str]) -> dict:
     """Copy terrain cfgs and disable flat patch sampling for pure geometry inspection."""
-    sub_terrains = _terrain_layout_to_ordered_dict(names, expected_count=len(names))
-    for _, cfg in sub_terrains.items():
-        copied_cfg = copy.deepcopy(cfg)
+    sub_terrains = {}
+    for idx, name in enumerate(names):
+        if name in TRAINING_SUB_TERRAINS:
+            source_cfg = TRAINING_SUB_TERRAINS[name]
+        elif name in SHARED_SUB_TERRAINS:
+            source_cfg = SHARED_SUB_TERRAINS[name]
+        else:
+            available_names = sorted(set(SHARED_SUB_TERRAINS.keys()) | set(TRAINING_SUB_TERRAINS.keys()))
+            raise ValueError(f"Unknown terrain name '{name}'. Available terrains: {available_names}")
+
+        copied_cfg = copy.deepcopy(source_cfg)
         if hasattr(copied_cfg, "flat_patch_sampling"):
             copied_cfg.flat_patch_sampling = None
-        sub_terrains[_] = copied_cfg
+        sub_terrains[f"terrain_{idx}"] = copied_cfg
     return sub_terrains
 
 
@@ -201,5 +229,25 @@ PHYSICAL_TERRAIN_COLLECTIONS = {
         "terrain_cfg": PHYSICAL_STUDY_CURRICULUM_CFG,
         "default_material": "high_grip",
         "description": "High-grip physical study set with rows increasing in terrain difficulty.",
+    },
+    "physical_slippery_bouncy": {
+        "terrain_cfg": PHYSICAL_STUDY_TERRAINS_CFG,
+        "default_material": "slippery_bouncy",
+        "description": "Same physical study set, combining low friction with rebound.",
+    },
+    "physical_slippery_bouncy_curriculum": {
+        "terrain_cfg": PHYSICAL_STUDY_CURRICULUM_CFG,
+        "default_material": "slippery_bouncy",
+        "description": "Slippery-and-bouncy physical study set with rows increasing in terrain difficulty.",
+    },
+    "physical_damped_soft_like": {
+        "terrain_cfg": PHYSICAL_STUDY_TERRAINS_CFG,
+        "default_material": "damped_soft_like",
+        "description": "Same physical study set, approximating softer and more damped contact.",
+    },
+    "physical_damped_soft_like_curriculum": {
+        "terrain_cfg": PHYSICAL_STUDY_CURRICULUM_CFG,
+        "default_material": "damped_soft_like",
+        "description": "Damped-soft-like physical study set with rows increasing in terrain difficulty.",
     },
 }

@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import ast
 import copy
+import random
 from pathlib import Path
 
 parser = argparse.ArgumentParser(description="Visualize terrain only, without spawning a robot.")
@@ -30,6 +31,10 @@ parser.add_argument(
         "physical_springy_curriculum",
         "physical_high_grip",
         "physical_high_grip_curriculum",
+        "physical_slippery_bouncy",
+        "physical_slippery_bouncy_curriculum",
+        "physical_damped_soft_like",
+        "physical_damped_soft_like_curriculum",
         "my",
         "training",
         "frontier",
@@ -115,6 +120,10 @@ def print_available_options() -> None:
         "physical_springy_curriculum",
         "physical_high_grip",
         "physical_high_grip_curriculum",
+        "physical_slippery_bouncy",
+        "physical_slippery_bouncy_curriculum",
+        "physical_damped_soft_like",
+        "physical_damped_soft_like_curriculum",
         "my",
         "training",
         "frontier",
@@ -156,6 +165,9 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from pxr import Gf, UsdGeom
 
 from instinctlab.terrains.physical_terrain_cfg import (
+    PHYSICAL_COMPARISON_MATERIAL_NAMES,
+    PHYSICAL_DISPLAY_TERRAIN_NAMES,
+    PHYSICAL_DYNAMIC_ARENA_NAMES,
     GEOMETRIC_ALL_TERRAINS_CFG,
     PHYSICAL_MATERIAL_PRESETS,
     PHYSICAL_TERRAIN_COLLECTIONS,
@@ -287,6 +299,8 @@ def use_grouped_physical_material_layout() -> bool:
             "physical_low_friction_curriculum",
             "physical_springy_curriculum",
             "physical_high_grip_curriculum",
+            "physical_slippery_bouncy_curriculum",
+            "physical_damped_soft_like_curriculum",
         }
     )
 
@@ -347,11 +361,255 @@ def terrain_root_prim_path_from_importer(importer: TerrainImporter) -> str:
     return importer.terrain_prim_paths[0]
 
 
+def spawn_primitive(prim_path: str, cfg, translation: tuple[float, float, float]) -> None:
+    cfg.func(prim_path, cfg)
+    set_root_translation(prim_path, translation)
+
+
+def make_static_cuboid_cfg(size: tuple[float, float, float], material_name: str, color: tuple[float, float, float]):
+    return sim_utils.CuboidCfg(
+        size=size,
+        collision_props=sim_utils.CollisionPropertiesCfg(),
+        physics_material=PHYSICAL_MATERIAL_PRESETS[material_name],
+        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=color, roughness=0.9),
+    )
+
+
+def make_dynamic_cuboid_cfg(
+    size: tuple[float, float, float],
+    material_name: str,
+    color: tuple[float, float, float],
+    mass: float,
+):
+    return sim_utils.CuboidCfg(
+        size=size,
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            rigid_body_enabled=True,
+            solver_position_iteration_count=16,
+            solver_velocity_iteration_count=2,
+        ),
+        mass_props=sim_utils.MassPropertiesCfg(mass=mass),
+        collision_props=sim_utils.CollisionPropertiesCfg(),
+        physics_material=PHYSICAL_MATERIAL_PRESETS[material_name],
+        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=color, roughness=0.85),
+    )
+
+
+def make_dynamic_cylinder_cfg(
+    radius: float,
+    height: float,
+    material_name: str,
+    color: tuple[float, float, float],
+    mass: float,
+):
+    return sim_utils.CylinderCfg(
+        radius=radius,
+        height=height,
+        axis="Y",
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            rigid_body_enabled=True,
+            solver_position_iteration_count=16,
+            solver_velocity_iteration_count=2,
+        ),
+        mass_props=sim_utils.MassPropertiesCfg(mass=mass),
+        collision_props=sim_utils.CollisionPropertiesCfg(),
+        physics_material=PHYSICAL_MATERIAL_PRESETS[material_name],
+        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=color, roughness=0.8),
+    )
+
+
+def row_centers_x(num_rows: int, tile_length_x: float) -> list[float]:
+    # The curriculum terrain importer lays out rows starting from x ~= 0.
+    # Shift dynamic arenas by half a tile so their footprint aligns visually.
+    return [row_idx * tile_length_x for row_idx in range(num_rows)]
+
+
+def spawn_looseness_dynamic_rubble_column(
+    root_path: str,
+    material_name: str,
+    y_center: float,
+    num_rows: int = 8,
+    tile_size: tuple[float, float] = (2.5, 2.5),
+) -> None:
+    tile_length_x, _ = tile_size
+    floor_color = (0.62, 0.62, 0.62)
+    wall_color = (0.46, 0.46, 0.46)
+    rubble_color = (0.56, 0.56, 0.56)
+    floor_thickness = 0.08
+    wall_thickness = 0.12
+    wall_height = 0.34
+    for row_idx, x_center in enumerate(row_centers_x(num_rows, tile_length_x)):
+        tile_root = f"{root_path}/row_{row_idx}"
+        difficulty = row_idx / max(num_rows - 1, 1)
+        floor_cfg = make_static_cuboid_cfg((2.50, 2.50, floor_thickness), material_name, floor_color)
+        spawn_primitive(f"{tile_root}/floor", floor_cfg, (x_center, y_center, -0.5 * floor_thickness))
+        wall_cfg = make_static_cuboid_cfg((2.50, wall_thickness, wall_height), material_name, wall_color)
+        spawn_primitive(
+            f"{tile_root}/wall_front",
+            wall_cfg,
+            (x_center + 0.0, y_center + 1.25, 0.5 * wall_height),
+        )
+        spawn_primitive(
+            f"{tile_root}/wall_back",
+            wall_cfg,
+            (x_center + 0.0, y_center - 1.25, 0.5 * wall_height),
+        )
+        wall_side_cfg = make_static_cuboid_cfg((wall_thickness, 2.50, wall_height), material_name, wall_color)
+        spawn_primitive(
+            f"{tile_root}/wall_left",
+            wall_side_cfg,
+            (x_center - 1.25, y_center, 0.5 * wall_height),
+        )
+        spawn_primitive(
+            f"{tile_root}/wall_right",
+            wall_side_cfg,
+            (x_center + 1.25, y_center, 0.5 * wall_height),
+        )
+
+        rng = random.Random(1000 + row_idx * 37 + len(material_name))
+        object_count = 90 + int(round(60 * difficulty))
+        for obj_idx in range(object_count):
+            px = x_center + rng.uniform(-0.95, 0.95)
+            py = y_center + rng.uniform(-0.95, 0.95)
+            if obj_idx % 2 == 0:
+                radius = rng.uniform(0.06, 0.11)
+                height = rng.uniform(0.14, 0.24)
+                cfg = make_dynamic_cylinder_cfg(radius, height, material_name, rubble_color, mass=0.24)
+                spawn_primitive(
+                    f"{tile_root}/rubble_cyl_{obj_idx}",
+                    cfg,
+                    (px, py, radius + 0.01),
+                )
+            else:
+                sx = rng.uniform(0.09, 0.18)
+                sy = rng.uniform(0.09, 0.18)
+                sz = rng.uniform(0.09, 0.16)
+                cfg = make_dynamic_cuboid_cfg((sx, sy, sz), material_name, rubble_color, mass=0.18)
+                spawn_primitive(
+                    f"{tile_root}/rubble_box_{obj_idx}",
+                    cfg,
+                    (px, py, 0.5 * sz + 0.01),
+                )
+
+
+def spawn_looseness_dense_small_rubble_column(
+    root_path: str,
+    material_name: str,
+    y_center: float,
+    num_rows: int = 8,
+    tile_size: tuple[float, float] = (2.5, 2.5),
+) -> None:
+    tile_length_x, _ = tile_size
+    floor_color = (0.60, 0.60, 0.60)
+    wall_color = (0.40, 0.40, 0.40)
+    rubble_color = (0.54, 0.54, 0.54)
+    floor_thickness = 0.08
+    wall_thickness = 0.18
+    wall_height = 0.60
+    for row_idx, x_center in enumerate(row_centers_x(num_rows, tile_length_x)):
+        tile_root = f"{root_path}/row_{row_idx}"
+        difficulty = row_idx / max(num_rows - 1, 1)
+        floor_cfg = make_static_cuboid_cfg((2.50, 2.50, floor_thickness), material_name, floor_color)
+        spawn_primitive(f"{tile_root}/floor", floor_cfg, (x_center, y_center, -0.5 * floor_thickness))
+        wall_cfg = make_static_cuboid_cfg((2.50, wall_thickness, wall_height), material_name, wall_color)
+        spawn_primitive(f"{tile_root}/wall_front", wall_cfg, (x_center, y_center + 1.25, 0.5 * wall_height))
+        spawn_primitive(f"{tile_root}/wall_back", wall_cfg, (x_center, y_center - 1.25, 0.5 * wall_height))
+        wall_side_cfg = make_static_cuboid_cfg((wall_thickness, 2.50, wall_height), material_name, wall_color)
+        spawn_primitive(f"{tile_root}/wall_left", wall_side_cfg, (x_center - 1.25, y_center, 0.5 * wall_height))
+        spawn_primitive(f"{tile_root}/wall_right", wall_side_cfg, (x_center + 1.25, y_center, 0.5 * wall_height))
+
+        rng = random.Random(3000 + row_idx * 53 + len(material_name))
+        object_count = 160 + int(round(90 * difficulty))
+        for obj_idx in range(object_count):
+            px = x_center + rng.uniform(-0.96, 0.96)
+            py = y_center + rng.uniform(-0.96, 0.96)
+            if obj_idx % 3 == 0:
+                radius = rng.uniform(0.035, 0.065)
+                height = rng.uniform(0.08, 0.16)
+                cfg = make_dynamic_cylinder_cfg(radius, height, material_name, rubble_color, mass=0.08)
+                spawn_primitive(
+                    f"{tile_root}/dense_cyl_{obj_idx}",
+                    cfg,
+                    (px, py, radius + 0.01),
+                )
+            else:
+                sx = rng.uniform(0.05, 0.10)
+                sy = rng.uniform(0.05, 0.10)
+                sz = rng.uniform(0.05, 0.09)
+                cfg = make_dynamic_cuboid_cfg((sx, sy, sz), material_name, rubble_color, mass=0.05)
+                spawn_primitive(
+                    f"{tile_root}/dense_box_{obj_idx}",
+                    cfg,
+                    (px, py, 0.5 * sz + 0.01),
+                )
+
+
+def spawn_stability_dynamic_support_column(
+    root_path: str,
+    material_name: str,
+    y_center: float,
+    num_rows: int = 8,
+    tile_size: tuple[float, float] = (2.5, 2.5),
+) -> None:
+    tile_length_x, _ = tile_size
+    floor_color = (0.62, 0.62, 0.62)
+    rail_color = (0.44, 0.44, 0.44)
+    support_color = (0.54, 0.54, 0.54)
+    floor_cfg = make_static_cuboid_cfg((2.50, 2.50, 0.08), material_name, floor_color)
+    rail_cfg = make_static_cuboid_cfg((2.0, 0.08, 0.18), material_name, rail_color)
+    for row_idx, x_center in enumerate(row_centers_x(num_rows, tile_length_x)):
+        tile_root = f"{root_path}/row_{row_idx}"
+        difficulty = row_idx / max(num_rows - 1, 1)
+        spawn_primitive(f"{tile_root}/floor", floor_cfg, (x_center, y_center, -0.04))
+        spawn_primitive(f"{tile_root}/rail_l", rail_cfg, (x_center, y_center - 0.92, 0.09))
+        spawn_primitive(f"{tile_root}/rail_r", rail_cfg, (x_center, y_center + 0.92, 0.09))
+
+        roller_count = 2 + row_idx // 2
+        roller_length = 1.55 - 0.75 * difficulty
+        roller_radius = 0.10 + 0.06 * difficulty
+        x_span = 0.9
+        if roller_count == 1:
+            local_x_positions = [0.0]
+        else:
+            local_x_positions = [
+                -x_span / 2 + i * (x_span / (roller_count - 1)) for i in range(roller_count)
+            ]
+        for roller_idx, local_x in enumerate(local_x_positions):
+            cfg = make_dynamic_cylinder_cfg(
+                radius=roller_radius,
+                height=roller_length,
+                material_name=material_name,
+                color=support_color,
+                mass=0.55 + 0.12 * difficulty,
+            )
+            spawn_primitive(
+                f"{tile_root}/roller_{roller_idx}",
+                cfg,
+                (x_center + local_x, y_center, roller_radius + 0.01),
+            )
+
+
+def spawn_dynamic_arena_column(
+    arena_name: str,
+    root_path: str,
+    material_name: str,
+    y_center: float,
+) -> None:
+    if arena_name == "stability_dynamic_support":
+        spawn_stability_dynamic_support_column(root_path, material_name, y_center)
+    elif arena_name == "looseness_dynamic_rubble":
+        spawn_looseness_dynamic_rubble_column(root_path, material_name, y_center)
+    elif arena_name == "looseness_dense_small_rubble":
+        spawn_looseness_dense_small_rubble_column(root_path, material_name, y_center)
+    else:
+        raise ValueError(f"Unsupported dynamic arena name: {arena_name}")
+
+
 def main():
     sim = SimulationContext(SimulationCfg())
 
     light_cfg = sim_utils.DomeLightCfg(
-        intensity=750.0,
+        intensity=430.0,
         texture_file=f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
     )
     light_cfg.func("/World/skyLight", light_cfg)
@@ -370,51 +628,57 @@ def main():
     if use_grouped_physical_material_layout():
         print("[INFO] grouped_material_layout = enabled")
     elif args_cli.material_grid:
-        print("[INFO] material_grid = default, low_friction, springy, high_grip")
+        print(f"[INFO] material_grid = {', '.join(PHYSICAL_COMPARISON_MATERIAL_NAMES)}")
     else:
         print(f"[INFO] material = {material_name}")
     if args_cli.compare_terrain_materials:
         print("[INFO] Single-terrain curriculum enabled: row 0 is easiest, last row is hardest.")
     elif not args_cli.terrain_names and "curriculum" in args_cli.terrain_set:
         print("[INFO] Curriculum rows enabled: row 0 is easiest, last row is hardest.")
-    if hasattr(terrain_generator, "terrain_layout") and terrain_generator.terrain_layout is not None:
+    if use_grouped_physical_material_layout():
+        print(f"[INFO] terrain_layout = {PHYSICAL_DISPLAY_TERRAIN_NAMES}")
+    elif hasattr(terrain_generator, "terrain_layout") and terrain_generator.terrain_layout is not None:
         print(f"[INFO] terrain_layout = {list(terrain_generator.terrain_layout)}")
     print("[INFO] Generating terrain only scene...")
     if use_grouped_physical_material_layout():
-        grid_materials = ["default", "low_friction", "springy", "high_grip"]
+        grid_materials = PHYSICAL_COMPARISON_MATERIAL_NAMES
         tile_width_y = 2.5
         intra_group_gap_y = 0.0
         inter_group_gap_y = 0.0
         base_y_spacing = tile_width_y + intra_group_gap_y
         terrain_y_spacing = base_y_spacing * len(grid_materials) + inter_group_gap_y
         total_width_y = (
-            len(PHYSICAL_STUDY_TERRAIN_NAMES) * len(grid_materials) * tile_width_y
-            + len(PHYSICAL_STUDY_TERRAIN_NAMES) * (len(grid_materials) - 1) * intra_group_gap_y
-            + (len(PHYSICAL_STUDY_TERRAIN_NAMES) - 1) * inter_group_gap_y
+            len(PHYSICAL_DISPLAY_TERRAIN_NAMES) * len(grid_materials) * tile_width_y
+            + len(PHYSICAL_DISPLAY_TERRAIN_NAMES) * (len(grid_materials) - 1) * intra_group_gap_y
+            + (len(PHYSICAL_DISPLAY_TERRAIN_NAMES) - 1) * inter_group_gap_y
         )
         y_center_offset = 0.5 * total_width_y
         print("[INFO] Grouped material columns by terrain:")
-        for terrain_idx, terrain_name in enumerate(PHYSICAL_STUDY_TERRAIN_NAMES):
+        for terrain_idx, terrain_name in enumerate(PHYSICAL_DISPLAY_TERRAIN_NAMES):
             print(f"  [terrain {terrain_idx}] {terrain_name}")
             for material_idx, grid_material in enumerate(grid_materials):
                 prim_path = f"/World/{terrain_name}_{grid_material}"
-                terrain_cfg_copy = build_single_terrain_curriculum_cfg(terrain_name)
-                importer_cfg = make_terrain_importer_cfg(terrain_cfg_copy, grid_material, prim_path)
-                importer = TerrainImporter(cfg=importer_cfg)
                 y_offset = (
                     terrain_idx * terrain_y_spacing
                     + material_idx * base_y_spacing
                     + 0.5 * tile_width_y
                     - y_center_offset
                 )
-                terrain_prim_path = terrain_root_prim_path_from_importer(importer)
-                set_root_translation(terrain_prim_path, (0.0, y_offset, 0.0))
+                if terrain_name in PHYSICAL_DYNAMIC_ARENA_NAMES:
+                    spawn_dynamic_arena_column(terrain_name, prim_path, grid_material, y_offset)
+                    terrain_prim_path = prim_path
+                else:
+                    terrain_cfg_copy = build_single_terrain_curriculum_cfg(terrain_name)
+                    importer_cfg = make_terrain_importer_cfg(terrain_cfg_copy, grid_material, prim_path)
+                    importer = TerrainImporter(cfg=importer_cfg)
+                    terrain_prim_path = terrain_root_prim_path_from_importer(importer)
+                    set_root_translation(terrain_prim_path, (0.0, y_offset, 0.0))
                 print(
                     f"    - material_col={material_idx} material={grid_material} "
                     f"prim={terrain_prim_path} y_offset={y_offset:.2f}"
                 )
         print(
-            f"[INFO] Grouped grid summary: terrains={len(PHYSICAL_STUDY_TERRAIN_NAMES)}, "
+            f"[INFO] Grouped grid summary: terrains={len(PHYSICAL_DISPLAY_TERRAIN_NAMES)}, "
             f"materials_per_terrain={len(grid_materials)}, rows=8, single_column_tile_size=(2.5, 2.5)"
         )
         if args_cli.camera == "top":
@@ -433,7 +697,7 @@ def main():
                 target=(10.0, 0.0, -2.0),
             )
     elif args_cli.material_grid or args_cli.compare_terrain_materials:
-        grid_materials = ["default", "low_friction", "springy", "high_grip"]
+        grid_materials = PHYSICAL_COMPARISON_MATERIAL_NAMES
         extent_y = terrain_generator.num_cols * terrain_generator.size[1]
         spacing_y = extent_y + 2.0
         total_width_y = spacing_y * (len(grid_materials) - 1)
