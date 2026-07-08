@@ -3,6 +3,7 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import copy
 import os
 import subprocess
 import sys
@@ -94,6 +95,33 @@ parser.add_argument(
     default=None,
     help="按地形名指定出生列（如 raised_mound / circle_track）。仅 num_envs=1 时生效。",
 )
+parser.add_argument(
+    "--play_terrain_set",
+    type=str,
+    default=None,
+    choices=[
+        "physical",
+        "physical_curriculum",
+        "physical_low_friction",
+        "physical_low_friction_curriculum",
+        "physical_springy",
+        "physical_springy_curriculum",
+        "physical_high_grip",
+        "physical_high_grip_curriculum",
+        "physical_slippery_bouncy",
+        "physical_slippery_bouncy_curriculum",
+        "physical_damped_soft_like",
+        "physical_damped_soft_like_curriculum",
+    ],
+    help="将 play 场景切换到 physical terrain 集合。注意：当前仅支持 static physical terrains，不包含 visualize_terrain_only.py 里额外动态生成的碎块/滚柱列。",
+)
+parser.add_argument(
+    "--play_material",
+    type=str,
+    default=None,
+    choices=["default", "low_friction", "springy", "high_grip", "slippery_bouncy", "damped_soft_like"],
+    help="覆盖 play 地形的 physics material。常与 --play_terrain_set 搭配使用。",
+)
 parser.add_argument("--show_first_person_rgbd", action="store_true", default=False, help="显示机器人第一视角 RGB 和 Depth 两个实时小窗口。")
 parser.add_argument(
     "--first_person_depth_source",
@@ -140,6 +168,7 @@ from instinct_rl.runners import OnPolicyRunner
 from instinct_rl.utils.utils import get_obs_slice, get_subobs_by_components, get_subobs_size
 
 from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent
+from isaaclab.terrains import FlatPatchSamplingCfg
 from isaaclab.utils.dict import print_dict
 # from isaaclab.utils.io import load_pickle, load_yaml
 from isaaclab.utils.io import  load_yaml
@@ -148,10 +177,57 @@ from isaaclab_tasks.utils import get_checkpoint_path, parse_env_cfg
 # Import extensions to set up environment tasks
 from instinctlab.utils.wrappers import InstinctRlVecEnvWrapper
 from instinctlab.utils.wrappers.instinct_rl import InstinctRlOnPolicyRunnerCfg
+from instinctlab.terrains.physical_terrain_cfg import (
+    PHYSICAL_STUDY_TERRAIN_NAMES,
+    PHYSICAL_DYNAMIC_ARENA_NAMES,
+    PHYSICAL_MATERIAL_PRESETS,
+    PHYSICAL_TERRAIN_COLLECTIONS,
+)
+from instinctlab.terrains.physical_dynamic_arenas import spawn_dynamic_arena_column
+from instinctlab.terrains.physical_dynamic_arenas import dynamic_arena_center_y
+from instinctlab.terrains.shared_terrain_cfg import SHARED_SUB_TERRAINS, TRAINING_SUB_TERRAINS
+from instinctlab.terrains.terrain_generator_cfg import FiledTerrainGeneratorCfg
+from instinctlab.terrains.terrain_generator import FiledTerrainGenerator
 
 
 RGB_WINDOW_NAME = "B2RM First-Person RGB"
 DEPTH_WINDOW_NAME = "B2RM First-Person Depth"
+
+
+def _build_playable_physical_terrain_cfg(base_cfg, terrain_names: list[str]) -> FiledTerrainGeneratorCfg:
+    """Rebuild a physical terrain cfg without stripping flat_patch_sampling.
+
+    The visualization presets disable flat patch sampling to avoid patch-shape
+    mismatches, but the play command generator needs a valid 'target' patch.
+    """
+    sub_terrains = {}
+    for idx, name in enumerate(terrain_names):
+        if name in TRAINING_SUB_TERRAINS:
+            source_cfg = TRAINING_SUB_TERRAINS[name]
+        elif name in SHARED_SUB_TERRAINS:
+            source_cfg = SHARED_SUB_TERRAINS[name]
+        else:
+            raise RuntimeError(f"Unknown physical terrain name for play: {name}")
+        copied_cfg = copy.deepcopy(source_cfg)
+        # Relax target patch search for physical-test play scenes so the
+        # terrain-based command generator always has reachable goals.
+        copied_cfg.flat_patch_sampling = {
+            "target": FlatPatchSamplingCfg(
+                num_patches=4,
+                patch_radius=[0.05, 0.10, 0.15],
+                max_height_diff=0.35,
+                x_range=(-0.6, 0.6),
+                y_range=(-0.6, 0.6),
+            )
+        }
+        sub_terrains[f"terrain_{idx}"] = copied_cfg
+
+    cfg = copy.deepcopy(base_cfg)
+    cfg.class_type = FiledTerrainGenerator
+    cfg.terrain_layout = terrain_names
+    cfg.sub_terrains = sub_terrains
+    cfg.num_cols = len(terrain_names)
+    return cfg
 
 
 def _ensure_uint8_rgb(image: np.ndarray) -> np.ndarray:
@@ -235,6 +311,67 @@ def main():
         args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
     )
     agent_cfg: InstinctRlOnPolicyRunnerCfg = cli_args.parse_instinct_rl_cfg(args_cli.task, args_cli)
+
+    active_play_material = None
+    if args_cli.play_terrain_set is not None:
+        if args_cli.play_terrain_set not in PHYSICAL_TERRAIN_COLLECTIONS:
+            raise RuntimeError(
+                f"Unsupported --play_terrain_set={args_cli.play_terrain_set!r}. "
+                f"Available: {sorted(PHYSICAL_TERRAIN_COLLECTIONS.keys())}"
+            )
+        terrain_collection = PHYSICAL_TERRAIN_COLLECTIONS[args_cli.play_terrain_set]
+        terrain_generator_cfg = _build_playable_physical_terrain_cfg(
+            base_cfg=terrain_collection["terrain_cfg"],
+            terrain_names=PHYSICAL_STUDY_TERRAIN_NAMES,
+        )
+        env_cfg.scene.terrain.terrain_generator = terrain_generator_cfg
+        if hasattr(env_cfg.scene.terrain, "max_init_terrain_level"):
+            env_cfg.scene.terrain.max_init_terrain_level = 0
+        selected_material = args_cli.play_material or terrain_collection["default_material"]
+        active_play_material = selected_material
+        env_cfg.scene.terrain.physics_material = copy.deepcopy(PHYSICAL_MATERIAL_PRESETS[selected_material])
+        print(
+            f"[INFO] Overrode play terrain set to {args_cli.play_terrain_set} "
+            f"with material={selected_material}, num_rows={terrain_generator_cfg.num_rows}, "
+            f"num_cols={terrain_generator_cfg.num_cols}"
+        )
+        print("[INFO] Physical terrain-set override enabled.")
+
+    dynamic_play_terrain_cols: dict[str, int] = {}
+    if (
+        args_cli.play_terrain_set is not None
+        and "curriculum" in args_cli.play_terrain_set
+        and args_cli.play_terrain in PHYSICAL_DYNAMIC_ARENA_NAMES
+    ):
+        terrain_generator_cfg = env_cfg.scene.terrain.terrain_generator
+        num_rows = int(terrain_generator_cfg.num_rows)
+        num_cols = int(terrain_generator_cfg.num_cols)
+        total_cols = num_cols + len(PHYSICAL_DYNAMIC_ARENA_NAMES)
+        target_dynamic_row = 0 if args_cli.play_row is None else int(args_cli.play_row)
+        target_dynamic_row = max(0, min(num_rows - 1, target_dynamic_row))
+        # Match the same centered grid convention used by terrain.env_origins / fallback relocation.
+        row_centers_x = [
+            -(row_idx - (num_rows - 1) / 2) * env_cfg.scene.env_spacing for row_idx in range(num_rows)
+        ]
+        material_name_for_dynamic = active_play_material or "default"
+        for arena_offset, arena_name in enumerate(PHYSICAL_DYNAMIC_ARENA_NAMES):
+            arena_col = num_cols + arena_offset
+            y_center = dynamic_arena_center_y(arena_offset, num_cols, env_cfg.scene.env_spacing)
+            dynamic_play_terrain_cols[arena_name] = arena_col
+            if arena_name == args_cli.play_terrain:
+                prim_path = f"/World/play_dynamic/{arena_name}_{material_name_for_dynamic}"
+                spawn_dynamic_arena_column(
+                    arena_name=arena_name,
+                    root_path=prim_path,
+                    material_name=material_name_for_dynamic,
+                    y_center=y_center,
+                    row_centers_x=row_centers_x,
+                    row_indices=[target_dynamic_row],
+                )
+        print(
+            f"[INFO] Pre-spawned dynamic play arena '{args_cli.play_terrain}' for row {target_dynamic_row}. "
+            f"Dynamic column map: {dynamic_play_terrain_cols}"
+        )
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "instinct_rl", agent_cfg.experiment_name)
@@ -331,6 +468,12 @@ def main():
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
+    if args_cli.play_terrain_set is not None and "curriculum" in args_cli.play_terrain_set:
+        terrain = env.unwrapped.scene.terrain
+        num_cols = int(terrain.cfg.terrain_generator.num_cols)
+        for arena_offset, arena_name in enumerate(PHYSICAL_DYNAMIC_ARENA_NAMES):
+            dynamic_play_terrain_cols[arena_name] = num_cols + arena_offset
+
     # 处理 --play_row / --play_col / --play_terrain：把单 env 重定位到指定网格
     if env_cfg.scene.num_envs == 1 and (
         args_cli.play_row is not None
@@ -343,6 +486,8 @@ def main():
 
         num_rows = int(terrain.cfg.terrain_generator.num_rows)
         num_cols = int(terrain.cfg.terrain_generator.num_cols)
+        total_cols = num_cols + len(dynamic_play_terrain_cols)
+        dynamic_target = False
 
         # 默认 row = 0, col = 0
         target_row = 0 if args_cli.play_row is None else int(args_cli.play_row)
@@ -350,7 +495,10 @@ def main():
 
         # --play_terrain 按名查 col（取第一个匹配列）
         if args_cli.play_terrain is not None:
-            if hasattr(terrain, "terrain_names"):
+            if args_cli.play_terrain in dynamic_play_terrain_cols:
+                target_col = dynamic_play_terrain_cols[args_cli.play_terrain]
+                dynamic_target = True
+            elif hasattr(terrain, "terrain_names"):
                 names_2d = terrain.terrain_names
                 matched_cols = [
                     c for c in range(num_cols) if any(names_2d[r, c] == args_cli.play_terrain for r in range(num_rows))
@@ -358,7 +506,7 @@ def main():
                 if not matched_cols:
                     raise RuntimeError(
                         f"--play_terrain={args_cli.play_terrain!r} not found in terrain_names; "
-                        f"available: {sorted(set(names_2d.flatten().tolist()))}"
+                        f"available: {sorted(set(names_2d.flatten().tolist())) + list(dynamic_play_terrain_cols.keys())}"
                     )
                 target_col = matched_cols[0]
             else:
@@ -370,19 +518,24 @@ def main():
                 f"--play_row={target_row} 越界, 合法范围 [0, {num_rows - 1}]。"
                 f" 注意这里是 0-based 行号：最简单是 0，最难是 {num_rows - 1}。"
             )
-        if not (0 <= target_col < num_cols):
-            raise RuntimeError(f"--play_col={target_col} 越界, 合法范围 [0, {num_cols - 1}]")
+        if not (0 <= target_col < total_cols):
+            raise RuntimeError(f"--play_col={target_col} 越界, 合法范围 [0, {total_cols - 1}]")
 
         # Isaac Lab env_origins 形状是 (num_envs, 3)，单 env 覆盖 env 0
         # terrain.terrain_origins 是 (num_rows, num_cols, 3)，curriculum=True 时
         # env_origins[i] = terrain_origins[terrain_levels[i], terrain_types[i]]
-        if hasattr(terrain, "terrain_origins") and terrain.terrain_origins is not None:
+        if not dynamic_target and hasattr(terrain, "terrain_origins") and terrain.terrain_origins is not None:
             new_origin = terrain.terrain_origins[target_row, target_col].clone()
         else:
+            if dynamic_target:
+                dynamic_idx = target_col - num_cols
+                y_coord = dynamic_arena_center_y(dynamic_idx, num_cols, env_cfg.scene.env_spacing)
+            else:
+                y_coord = (target_col - (total_cols - 1) / 2) * env_cfg.scene.env_spacing
             new_origin = torch.tensor(
                 [
                     -(target_row - (num_rows - 1) / 2) * env_cfg.scene.env_spacing,
-                    (target_col - (num_cols - 1) / 2) * env_cfg.scene.env_spacing,
+                    y_coord,
                     0.0,
                 ],
                 device=terrain.env_origins.device,
@@ -395,7 +548,7 @@ def main():
             env.unwrapped.scene.env_origins[0] = new_origin
         if hasattr(terrain, "terrain_levels") and terrain.terrain_levels is not None:
             terrain.terrain_levels[0] = target_row
-        if hasattr(terrain, "terrain_types") and terrain.terrain_types is not None:
+        if not dynamic_target and hasattr(terrain, "terrain_types") and terrain.terrain_types is not None:
             terrain.terrain_types[0] = target_col
 
         # 仅重置 env 0，让机器人真正出生到目标行列，而不是只改元数据。
@@ -403,12 +556,14 @@ def main():
         env.unwrapped._reset_idx(env_id_tensor)
 
         # 打印定位信息
-        if hasattr(terrain, "terrain_names"):
+        if dynamic_target:
+            tname = args_cli.play_terrain
+        elif hasattr(terrain, "terrain_names"):
             tname = terrain.terrain_names[target_row, target_col]
         else:
             tname = "?"
         actual_row = int(terrain.terrain_levels[0].item()) if hasattr(terrain, "terrain_levels") else -1
-        actual_col = int(terrain.terrain_types[0].item()) if hasattr(terrain, "terrain_types") else -1
+        actual_col = target_col if dynamic_target else (int(terrain.terrain_types[0].item()) if hasattr(terrain, "terrain_types") else -1)
         print(
             f"[PLAY LOC] 重定位单 env: target_row={target_row}, target_col={target_col}, "
             f"actual_row={actual_row}, actual_col={actual_col}, "
