@@ -95,6 +95,7 @@ class B2RMSceneCfg(InteractiveSceneCfg):
         visual_material=sim_utils.MdlFileCfg(
             mdl_path=f"{ISAACLAB_NUCLEUS_DIR}/Materials/TilesMarbleSpiderWhiteBrickBondHoned/TilesMarbleSpiderWhiteBrickBondHoned.mdl",
             project_uvw=True,
+            albedo_brightness=0.55,
             texture_scale=(0.25, 0.25),
         ),
         debug_vis=False,
@@ -105,7 +106,7 @@ class B2RMSceneCfg(InteractiveSceneCfg):
     sky_light = AssetBaseCfg(
         prim_path="/World/skyLight",
         spawn=sim_utils.DomeLightCfg(
-            intensity=750.0,
+            intensity=450.0,
             texture_file=f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
         ),
     )
@@ -175,13 +176,13 @@ class B2RMSceneCfg(InteractiveSceneCfg):
         prim_path="{ENV_REGEX_NS}/Robot/base_link/rgb_camera",
         spawn=PinholeCameraCfg(
             focal_length=24.0,
-            horizontal_aperture=20.955,
+            horizontal_aperture=47.5,
             clipping_range=(0.01, 1e6),
         ),
         width=640,
         height=360,
         offset=CameraCfg.OffsetCfg(
-            pos=(0.41251, 0.024997, 0.05765),
+            pos=(0.47251, 0.024997, 0.05765),
             rot=(0.9135367613482678, 0.004363309284746571, 0.4067366430758002, 0.0),
             convention="world",
         ),
@@ -610,13 +611,20 @@ class B2RMActionsCfg:
         scale=0.4,
         use_default_offset=True,
     )
-    # Keep arm in action space for tracking, but tightly around folded pose.
-    arm_joint_pos = instinct_mdp.JointPositionActionCfg(
+    # Preserve arm action dimensions for checkpoint compatibility, but hold a
+    # reset-sampled safe carry pose instead of letting the policy move the arm.
+    arm_joint_pos = instinct_mdp.DynamicTargetJointPositionActionCfg(
         asset_name="robot",
         joint_names=["arm_joint_1", "arm_joint_2", "arm_joint_3", "arm_joint_4", "arm_joint_5", "arm_joint_6"],
-        scale=0.05,
+        scale=0.0,
         offset=ARM_FOLDED_OFFSET,
         use_default_offset=False,
+        target_attr_name="_b2rm_arm_carry_joint_pos_target",
+        ee_target_pos_attr_name="_b2rm_arm_workspace_target_pos_w",
+        ee_body_name="gripper_base_link",
+        ik_damping=0.05,
+        ik_gain=0.7,
+        max_ik_delta=0.12,
     )
 
 
@@ -634,6 +642,17 @@ class B2RMMonitorsCfg:
 
 @configclass
 class B2RMEventsCfg:
+    arm_tip_payload = EventTerm(
+        func=mdp.randomize_rigid_body_mass,
+        mode="reset",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=["arm_link_6"]),
+            "mass_distribution_params": (0.0, 3.0),
+            "operation": "add",
+            "recompute_inertia": True,
+        },
+    )
+
     # Keep mild base randomization at reset.
     reset_base = EventTerm(
         func=mdp.reset_root_state_uniform,
@@ -671,6 +690,64 @@ class B2RMEventsCfg:
         params={
             "joint_pos_targets": ARM_FOLDED_OFFSET,
             "joint_vel_target": 0.0,
+        },
+    )
+
+    arm_workspace_target_reset = EventTerm(
+        func=mdp.randomize_arm_workspace_target,
+        mode="reset",
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "radius_range": (0.42, 1.05),
+            "pitch_range": (math.radians(-65.0), math.radians(78.0)),
+            "yaw_range": (math.pi - 1.15, math.pi + 1.15),
+            "sphere_center_offset_b": (-0.19836152, 0.0, 0.0),
+            "ground_clearance": 0.50,
+            "collision_lower_limits": [
+                (-0.37, -0.19, -0.63),
+                (-0.55, 0.07, -0.77),
+                (-0.55, -0.33, -0.77),
+            ],
+            "collision_upper_limits": [
+                (0.27, 0.19, 0.07),
+                (-0.13, 0.33, 0.25),
+                (-0.13, -0.07, 0.25),
+            ],
+            "corridor_collision_lower_limits": (-0.55, -0.30, -0.70),
+            "corridor_collision_upper_limits": (0.10, 0.30, 0.10),
+            "corridor_collision_num_samples": 5,
+            "max_resample_attempts": 12,
+            "target_pos_attr_name": "_b2rm_arm_workspace_target_pos_w",
+        },
+    )
+
+    arm_workspace_target_interval = EventTerm(
+        func=mdp.randomize_arm_workspace_target,
+        mode="interval",
+        interval_range_s=(5.0, 5.0),
+        is_global_time=False,
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "radius_range": (0.42, 1.05),
+            "pitch_range": (math.radians(-65.0), math.radians(78.0)),
+            "yaw_range": (math.pi - 1.15, math.pi + 1.15),
+            "sphere_center_offset_b": (-0.19836152, 0.0, 0.0),
+            "ground_clearance": 0.50,
+            "collision_lower_limits": [
+                (-0.37, -0.19, -0.63),
+                (-0.55, 0.07, -0.77),
+                (-0.55, -0.33, -0.77),
+            ],
+            "collision_upper_limits": [
+                (0.27, 0.19, 0.07),
+                (-0.13, 0.33, 0.25),
+                (-0.13, -0.07, 0.25),
+            ],
+            "corridor_collision_lower_limits": (-0.55, -0.30, -0.70),
+            "corridor_collision_upper_limits": (0.10, 0.30, 0.10),
+            "corridor_collision_num_samples": 5,
+            "max_resample_attempts": 12,
+            "target_pos_attr_name": "_b2rm_arm_workspace_target_pos_w",
         },
     )
 

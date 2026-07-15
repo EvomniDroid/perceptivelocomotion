@@ -72,6 +72,12 @@ parser.add_argument("--keyboard_angvel_step", type=float, default=0.1, help="键
 parser.add_argument("--free_view", action="store_true", default=False, help="自由视角（不跟随机器人）。")
 parser.add_argument("--debug_ray", action="store_true", default=False, help="启用射线检测可视化。")
 parser.add_argument(
+    "--disable_arm_disturbance",
+    action="store_true",
+    default=False,
+    help="关闭 play 中机械臂末端载荷随机和机械臂 interval 姿态扰动，便于和无扰动策略做对照。",
+)
+parser.add_argument(
     "--no_terminate",
     action="store_true",
     default=False,
@@ -311,6 +317,19 @@ def main():
         args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
     )
     agent_cfg: InstinctRlOnPolicyRunnerCfg = cli_args.parse_instinct_rl_cfg(args_cli.task, args_cli)
+
+    if args_cli.disable_arm_disturbance and hasattr(env_cfg, "events") and env_cfg.events is not None:
+        if hasattr(env_cfg.events, "arm_tip_payload"):
+            env_cfg.events.arm_tip_payload = None
+        if hasattr(env_cfg.events, "arm_safe_carry_pose"):
+            env_cfg.events.arm_safe_carry_pose = None
+        if hasattr(env_cfg.events, "arm_workspace_target_reset"):
+            env_cfg.events.arm_workspace_target_reset = None
+        if hasattr(env_cfg.events, "arm_workspace_target_interval"):
+            env_cfg.events.arm_workspace_target_interval = None
+        if hasattr(env_cfg.events, "arm_pose_interval"):
+            env_cfg.events.arm_pose_interval = None
+        print("[INFO] --disable_arm_disturbance: 已关闭 play 中机械臂末端载荷随机与安全携带姿态扰动。")
 
     active_play_material = None
     if args_cli.play_terrain_set is not None:

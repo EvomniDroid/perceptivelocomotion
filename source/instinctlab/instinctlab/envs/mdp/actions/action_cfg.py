@@ -21,3 +21,28 @@ class ActionOverridenJointPositionActionCfg(JointPositionActionCfg):
 
     override_value: float = 0.0
     """Delay in frames before the action is overridden. Defaults to 0."""
+
+
+@configclass
+class DynamicTargetJointPositionActionCfg(JointPositionActionCfg):
+    """Joint position action that can be overridden by a per-env target stored on the asset."""
+
+    class_type: type[ActionTerm] = joint_actions.DynamicTargetJointPositionAction
+
+    target_attr_name: str = "_dynamic_joint_position_target"
+    """Name of the articulation attribute containing a full joint target tensor."""
+
+    ee_target_pos_attr_name: str | None = None
+    """Optional articulation attribute containing an end-effector target position in world frame."""
+
+    ee_body_name: str | None = None
+    """End-effector body name used for Jacobian IK when ee_target_pos_attr_name is set."""
+
+    ik_damping: float = 0.05
+    """Damping used by the damped-least-squares IK solve."""
+
+    ik_gain: float = 0.7
+    """Joint update gain applied to the IK solution each policy step."""
+
+    max_ik_delta: float = 0.12
+    """Maximum end-effector position correction per policy step in meters."""

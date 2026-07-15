@@ -54,6 +54,12 @@ parser.add_argument(
     choices=("full", "mound_pit", "pit_only"),
     help="阶段2训练计划：full=全地形；mound_pit=凸台+坑专项；pit_only=仅训练出坑专项。",
 )
+parser.add_argument(
+    "--disable_arm_disturbance",
+    action="store_true",
+    default=False,
+    help="训练时关闭机械臂末端载荷随机与安全/工作空间姿态扰动事件。",
+)
 # 附加 Instinct-RL 的命令行参数
 cli_args.add_instinct_rl_args(parser)
 # 附加 AppLauncher 的命令行参数
@@ -211,6 +217,22 @@ def _apply_stage2_plan_overrides(env_cfg, plan_name: str):
     raise ValueError(f"Unknown stage2 plan: {plan_name}")
 
 
+def _disable_arm_disturbance_events(env_cfg) -> None:
+    """关闭机械臂随机扰动事件，只保留原任务/腿部训练逻辑。"""
+    if not hasattr(env_cfg, "events") or env_cfg.events is None:
+        return
+
+    for event_name in (
+        "arm_tip_payload",
+        "arm_safe_carry_pose",
+        "arm_workspace_target_reset",
+        "arm_workspace_target_interval",
+        "arm_pose_interval",
+    ):
+        if hasattr(env_cfg.events, event_name):
+            setattr(env_cfg.events, event_name, None)
+
+
 @hydra_task_config(args_cli.task, "instinct_rl_cfg_entry_point")
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: InstinctRlOnPolicyRunnerCfg):
     """使用 Instinct-RL 智能体进行训练主函数。"""
@@ -287,12 +309,17 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     resume_iter = 0
     saved_sub_terrains = copy.deepcopy(TRAINING_SUB_TERRAINS)
     stage2_plan_desc = "全地形 stage2"
+    stage2_env_cfg = None
 
     if is_resuming:
         resume_iter = _get_checkpoint_iteration(resume_path)
         print(f"[恢复] checkpoint 当前轮数: {resume_iter}")
 
     if stage2_at > 0 and resume_iter < stage2_at:
+        # Keep a clean copy for the second gym.make().
+        # IsaacLab managers resolve cfg fields in-place during env construction, so reusing
+        # the stage1 cfg after env.close() can make configclass validation recurse forever.
+        stage2_env_cfg = copy.deepcopy(env_cfg)
         stage1_target_iter = min(stage2_at, agent_cfg.max_iterations)
         print(f"[两阶段] 阶段1目标轮数: {stage1_target_iter}")
         env_cfg.scene.terrain.terrain_generator.sub_terrains = FLAT_TRAINING_SUB_TERRAINS
@@ -305,6 +332,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         else:
             print(f"[训练] 当前 checkpoint 已达到/超过 stage1 目标轮数 {stage2_at}: 直接进入{stage2_plan_desc}")
 
+    if args_cli.disable_arm_disturbance:
+        _disable_arm_disturbance_events(env_cfg)
+        if stage2_env_cfg is not None:
+            _disable_arm_disturbance_events(stage2_env_cfg)
+        print("[INFO] --disable_arm_disturbance: 已关闭训练中的机械臂末端载荷随机与安全/工作空间姿态扰动。")
+
     # The policy depth input uses a ray-caster camera, which does not require Isaac's rendered camera backend.
     # Disable rendered RGB cameras during normal training unless video recording explicitly needs them.
     if not args_cli.video:
@@ -314,6 +347,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         if hasattr(env_cfg.scene, "camera_rgb_record"):
             env_cfg.scene.camera_rgb_record = None
             print("[INFO] Disabled scene.camera_rgb_record for training.")
+        if stage2_env_cfg is not None:
+            if hasattr(stage2_env_cfg.scene, "rgb_camera"):
+                stage2_env_cfg.scene.rgb_camera = None
+            if hasattr(stage2_env_cfg.scene, "camera_rgb_record"):
+                stage2_env_cfg.scene.camera_rgb_record = None
 
     # 创建 isaac 仿真环境
     print("进入环境构造")
@@ -380,16 +418,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
         # ---- 阶段2: 全地形 ----
         stage2_remaining = _get_remaining_iterations(stage1_target_iter, agent_cfg.max_iterations)
-        stage2_plan_desc = _apply_stage2_plan_overrides(env_cfg, args_cli.stage2_plan)
+        if stage2_env_cfg is None:
+            stage2_env_cfg = copy.deepcopy(env_cfg)
+        stage2_plan_desc = _apply_stage2_plan_overrides(stage2_env_cfg, args_cli.stage2_plan)
         print(f"[两阶段] 阶段2: 切换到{stage2_plan_desc}，目标总轮数 {agent_cfg.max_iterations}，剩余 {stage2_remaining} 轮")
-        env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+        env = gym.make(args_cli.task, cfg=stage2_env_cfg, render_mode="rgb_array" if args_cli.video else None)
         if isinstance(env.unwrapped, DirectMARLEnv):
             env = multi_agent_to_single_agent(env)
         env = InstinctRlVecEnvWrapper(env)
         runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
         runner.load(stage1_ckpt)
         if not ("LOCAL_RANK" in os.environ and dist.get_rank() > 0):
-            dump_yaml(os.path.join(log_dir, "params", "env_stage2.yaml"), env_cfg)
+            dump_yaml(os.path.join(log_dir, "params", "env_stage2.yaml"), stage2_env_cfg)
 
         stage2_remaining = _get_remaining_iterations(runner.current_learning_iteration, agent_cfg.max_iterations)
         if stage2_remaining > 0:
