@@ -534,7 +534,7 @@ class B2RMCommandsCfg:
         random_velocity_terrain=["perlin_rough_stand", "boxes", "mesh_boxes"],
         random_ang_vel_threshold=0.0,
         velocity_ranges={
-            "perlin_rough": {"lin_vel_x": (0.0, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.8, 0.8)},
+            "perlin_rough": {"lin_vel_x": (0.05, 0.6), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.8, 0.8)},
             "perlin_rough_stand": {"lin_vel_x": (0.0, 0.0), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (0.0, 0.0)},
             "square_gaps": {"lin_vel_x": (0.15, 0.8), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.5, 0.5)},
             "pyramid_stairs": {"lin_vel_x": (0.12, 0.70), "lin_vel_y": (0.0, 0.0), "ang_vel_z": (-0.08, 0.08)},
@@ -642,30 +642,23 @@ class B2RMMonitorsCfg:
 
 @configclass
 class B2RMEventsCfg:
-    arm_tip_payload = EventTerm(
-        func=mdp.randomize_rigid_body_mass,
-        mode="reset",
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=["arm_link_6"]),
-            "mass_distribution_params": (0.0, 3.0),
-            "operation": "add",
-            "recompute_inertia": True,
-        },
-    )
+    # Keep the arm fixed for this B2 locomotion baseline.
+    arm_tip_payload = None
 
-    # Keep mild base randomization at reset.
+    # Match basic-locomotion B2: reset at the terrain origin, random yaw only,
+    # and no injected root velocity.
     reset_base = EventTerm(
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (-0.1, 0.1), "y": (-0.1, 0.1), "yaw": (-0.1, 0.1)},
+            "pose_range": {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (-math.pi, math.pi)},
             "velocity_range": {
-                "x": (-0.2, 0.2),
-                "y": (-0.2, 0.2),
-                "z": (-0.2, 0.2),
-                "roll": (-0.2, 0.2),
-                "pitch": (-0.2, 0.2),
-                "yaw": (-0.2, 0.2),
+                "x": (0.0, 0.0),
+                "y": (0.0, 0.0),
+                "z": (0.0, 0.0),
+                "roll": (0.0, 0.0),
+                "pitch": (0.0, 0.0),
+                "yaw": (0.0, 0.0),
             },
         },
     )
@@ -678,7 +671,7 @@ class B2RMEventsCfg:
             "asset_cfg": SceneEntityCfg(
                 "robot", joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"]
             ),
-            "position_range": (-0.05, 0.05),
+            "position_range": (-0.2, 0.2),
             "velocity_range": (0.0, 0.0),
         },
     )
@@ -693,61 +686,49 @@ class B2RMEventsCfg:
         },
     )
 
-    arm_workspace_target_reset = EventTerm(
-        func=mdp.randomize_arm_workspace_target,
+    arm_workspace_target_reset = None
+    arm_workspace_target_interval = None
+
+    # Basic B2 reset disturbance, restricted to the B2RM base body.
+    base_external_force_torque = EventTerm(
+        func=mdp.apply_external_force_torque,
         mode="reset",
         params={
-            "asset_cfg": SceneEntityCfg("robot"),
-            "radius_range": (0.42, 1.05),
-            "pitch_range": (math.radians(-65.0), math.radians(78.0)),
-            "yaw_range": (math.pi - 1.15, math.pi + 1.15),
-            "sphere_center_offset_b": (-0.19836152, 0.0, 0.0),
-            "ground_clearance": 0.50,
-            "collision_lower_limits": [
-                (-0.37, -0.19, -0.63),
-                (-0.55, 0.07, -0.77),
-                (-0.55, -0.33, -0.77),
-            ],
-            "collision_upper_limits": [
-                (0.27, 0.19, 0.07),
-                (-0.13, 0.33, 0.25),
-                (-0.13, -0.07, 0.25),
-            ],
-            "corridor_collision_lower_limits": (-0.55, -0.30, -0.70),
-            "corridor_collision_upper_limits": (0.10, 0.30, 0.10),
-            "corridor_collision_num_samples": 5,
-            "max_resample_attempts": 12,
-            "target_pos_attr_name": "_b2rm_arm_workspace_target_pos_w",
+            "asset_cfg": SceneEntityCfg("robot", body_names="base_link"),
+            "force_range": (-5.0, 5.0),
+            "torque_range": (-5.0, 5.0),
         },
     )
 
-    arm_workspace_target_interval = EventTerm(
-        func=mdp.randomize_arm_workspace_target,
-        mode="interval",
-        interval_range_s=(5.0, 5.0),
-        is_global_time=False,
+    # Basic B2 gain randomization, restricted to the locomotion joints so the
+    # folded arm remains deterministic.
+    actuator_gains = EventTerm(
+        func=mdp.randomize_actuator_gains,
+        mode="reset",
         params={
-            "asset_cfg": SceneEntityCfg("robot"),
-            "radius_range": (0.42, 1.05),
-            "pitch_range": (math.radians(-65.0), math.radians(78.0)),
-            "yaw_range": (math.pi - 1.15, math.pi + 1.15),
-            "sphere_center_offset_b": (-0.19836152, 0.0, 0.0),
-            "ground_clearance": 0.50,
-            "collision_lower_limits": [
-                (-0.37, -0.19, -0.63),
-                (-0.55, 0.07, -0.77),
-                (-0.55, -0.33, -0.77),
-            ],
-            "collision_upper_limits": [
-                (0.27, 0.19, 0.07),
-                (-0.13, 0.33, 0.25),
-                (-0.13, -0.07, 0.25),
-            ],
-            "corridor_collision_lower_limits": (-0.55, -0.30, -0.70),
-            "corridor_collision_upper_limits": (0.10, 0.30, 0.10),
-            "corridor_collision_num_samples": 5,
-            "max_resample_attempts": 12,
-            "target_pos_attr_name": "_b2rm_arm_workspace_target_pos_w",
+            "asset_cfg": SceneEntityCfg(
+                "robot", joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"]
+            ),
+            "stiffness_distribution_params": (-20.0, 20.0),
+            "damping_distribution_params": (-1.0, 1.0),
+            "operation": "add",
+            "distribution": "uniform",
+        },
+    )
+
+    push_robot = EventTerm(
+        func=mdp.push_by_setting_velocity,
+        mode="interval",
+        interval_range_s=(10.0, 15.0),
+        params={
+            "velocity_range": {
+                "x": (-0.5, 0.5),
+                "y": (-0.5, 0.5),
+                "z": (-0.5, 0.5),
+                "roll": (-0.5, 0.5),
+                "pitch": (-0.5, 0.5),
+                "yaw": (-0.5, 0.5),
+            }
         },
     )
 

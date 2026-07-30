@@ -545,7 +545,7 @@ SHARED_SUB_TERRAINS = _inject_name_to_cfgs({
 
 FLAT_TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
     "perlin_rough": PerlinPlaneTerrainCfg(
-        proportion=0.50,
+        proportion=0.80,
         noise_scale=[0.0, 0.02],
         noise_frequency=20,
         fractal_octaves=2,
@@ -562,7 +562,7 @@ FLAT_TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
         },
     ),
     "perlin_rough_stand": PerlinPlaneTerrainCfg(
-        proportion=0.50,
+        proportion=0.20,
         noise_scale=[0.0, 0.02],
         noise_frequency=20,
         fractal_octaves=2,
@@ -767,7 +767,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
     ),
     "pyramid_stairs": PerlinPyramidStairsTerrainCfg(
         proportion=0.10,
-        step_height_range=(0.05, 0.43),
+        step_height_range=(0.05, 0.23),
         step_width=0.3,
         platform_width=1.5,
         border_width=0.3,
@@ -794,7 +794,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
     ),
     "pyramid_stairs_high": PerlinPyramidStairsTerrainCfg(
         proportion=0.05,
-        step_height_range=(0.05, 0.43),
+        step_height_range=(0.05, 0.32),
         step_width=1.5,
         platform_width=4.0,
         border_width=0.3,
@@ -821,7 +821,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
     ),
     "pyramid_stairs_inv": PerlinInvertedPyramidStairsTerrainCfg(
         proportion=0.10,
-        step_height_range=(0.05, 0.43),
+        step_height_range=(0.05, 0.23),
         step_width=0.3,
         platform_width=1.5,
         border_width=0.3,
@@ -848,7 +848,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
     ),
     "pyramid_stairs_inv_high": PerlinInvertedPyramidStairsTerrainCfg(
         proportion=0.05,
-        step_height_range=(0.05, 0.43),
+        step_height_range=(0.05, 0.32),
         step_width=1.5,
         platform_width=4.0,
         border_width=0.3,
@@ -1025,7 +1025,7 @@ TRAINING_SUB_TERRAINS = _inject_name_to_cfgs({
     ),
     "wave": PerlinWaveTerrainCfg(
         proportion=0.05,
-        amplitude_range=(0.1, 0.6),
+        amplitude_range=(0.1, 0.3),
         num_waves=3,
         border_width=0.0,
         wall_prob=[0.0, 0.0, 0.0, 0.0],
