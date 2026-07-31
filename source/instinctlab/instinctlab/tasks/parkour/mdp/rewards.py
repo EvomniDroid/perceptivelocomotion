@@ -18,14 +18,16 @@ def gait_phase(
     period: float = 0.8,
 ) -> torch.Tensor:
     """Return a policy-observable periodic clock as ``[sin, cos]``."""
-    phase = torch.remainder(env.episode_length_buf.float() * env.step_dt, period) / period
+    step_buf = getattr(env, "policy_step_buf", env.episode_length_buf)
+    phase = torch.remainder(step_buf.float() * env.step_dt, period) / period
     angle = 2.0 * math.pi * phase
     return torch.stack((torch.sin(angle), torch.cos(angle)), dim=-1)
 
 
 def _trot_stance_targets(env: ManagerBasedRLEnv, period: float) -> torch.Tensor:
     """Build alternating FL/RR and FR/RL stance targets in FL, FR, RL, RR order."""
-    phase = torch.remainder(env.episode_length_buf.float() * env.step_dt, period) / period
+    step_buf = getattr(env, "policy_step_buf", env.episode_length_buf)
+    phase = torch.remainder(step_buf.float() * env.step_dt, period) / period
     first_diagonal = (phase < 0.5).float()
     second_diagonal = 1.0 - first_diagonal
     return torch.stack(

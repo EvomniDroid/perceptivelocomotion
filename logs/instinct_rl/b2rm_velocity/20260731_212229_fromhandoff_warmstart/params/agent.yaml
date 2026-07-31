@@ -38,8 +38,8 @@ save_interval: 1000
 log_interval: 1
 experiment_name: b2rm_velocity
 run_name: ''
-resume: false
-load_run: ''
-load_checkpoint: ''
+resume: true
+load_run: /home/zh/isaac/instinctlab/logs/instinct_rl/b2rm_velocity/handoff_warmstart_from_20260731_193033
+load_checkpoint: model_7000.pt
 normalizers: {}
 empirical_normalization: false
