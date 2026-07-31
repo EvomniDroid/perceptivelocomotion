@@ -1,0 +1,45 @@
+seed: 42
+device: cuda:0
+num_steps_per_env: 32
+max_iterations: 10000
+ckpt_manipulator: null
+policy:
+  class_name: MoEActorCritic
+  init_noise_std: 0.4
+  actor_hidden_dims:
+  - 256
+  - 128
+  - 64
+  critic_hidden_dims:
+  - 256
+  - 128
+  - 64
+  activation: elu
+  num_moe_experts: 4
+  moe_gate_hidden_dims: []
+algorithm:
+  class_name: PPO
+  value_loss_coef: 0.5
+  use_clipped_value_loss: true
+  clip_param: 0.2
+  entropy_coef: 0.003
+  num_learning_epochs: 3
+  num_mini_batches: 8
+  learning_rate: 7.5e-05
+  optimizer_class_name: AdamW
+  schedule: adaptive
+  gamma: 0.995
+  lam: 0.97
+  advantage_mixing_weights: 1.0
+  desired_kl: 0.008
+  max_grad_norm: 0.5
+  clip_min_std: 1.0e-12
+save_interval: 1000
+log_interval: 1
+experiment_name: b2rm_velocity
+run_name: ''
+resume: false
+load_run: ''
+load_checkpoint: ''
+normalizers: {}
+empirical_normalization: false
