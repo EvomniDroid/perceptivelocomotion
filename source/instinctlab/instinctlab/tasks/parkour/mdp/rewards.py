@@ -13,6 +13,79 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
+def gait_phase(
+    env: ManagerBasedRLEnv,
+    period: float = 0.8,
+) -> torch.Tensor:
+    """Return a policy-observable periodic clock as ``[sin, cos]``."""
+    phase = torch.remainder(env.episode_length_buf.float() * env.step_dt, period) / period
+    angle = 2.0 * math.pi * phase
+    return torch.stack((torch.sin(angle), torch.cos(angle)), dim=-1)
+
+
+def _trot_stance_targets(env: ManagerBasedRLEnv, period: float) -> torch.Tensor:
+    """Build alternating FL/RR and FR/RL stance targets in FL, FR, RL, RR order."""
+    phase = torch.remainder(env.episode_length_buf.float() * env.step_dt, period) / period
+    first_diagonal = (phase < 0.5).float()
+    second_diagonal = 1.0 - first_diagonal
+    return torch.stack(
+        (first_diagonal, second_diagonal, second_diagonal, first_diagonal),
+        dim=-1,
+    )
+
+
+def trot_phase_contact_reward(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    period: float = 0.8,
+    force_scale: float = 120.0,
+    sigma: float = 0.25,
+    command_threshold: float = 0.05,
+) -> torch.Tensor:
+    """Reward force contacts that alternate between the two trot diagonals."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_forces = contact_sensor.data.net_forces_w_history[:, -1, sensor_cfg.body_ids]
+    contact = torch.clamp(torch.norm(contact_forces, dim=-1) / force_scale, 0.0, 1.0)
+    desired_stance = _trot_stance_targets(env, period)
+    contact_error = torch.mean(torch.square(contact - desired_stance), dim=-1)
+
+    command = env.command_manager.get_command(command_name)
+    has_command = torch.logical_or(
+        torch.norm(command[:, :2], dim=-1) >= command_threshold,
+        torch.abs(command[:, 2]) >= command_threshold,
+    )
+    return torch.exp(-contact_error / sigma) * has_command.float()
+
+
+def trot_phase_foot_velocity_penalty(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    period: float = 0.8,
+    min_swing_speed: float = 0.35,
+    command_threshold: float = 0.05,
+) -> torch.Tensor:
+    """Penalize moving stance feet and swing feet that remain nearly stationary."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    foot_speed = torch.norm(asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :], dim=-1)
+    desired_stance = _trot_stance_targets(env, period)
+    desired_swing = 1.0 - desired_stance
+
+    stance_error = desired_stance * torch.square(foot_speed)
+    swing_error = desired_swing * torch.square(
+        torch.clamp(min_swing_speed - foot_speed, min=0.0)
+    )
+    error = torch.mean(stance_error + swing_error, dim=-1)
+
+    command = env.command_manager.get_command(command_name)
+    has_command = torch.logical_or(
+        torch.norm(command[:, :2], dim=-1) >= command_threshold,
+        torch.abs(command[:, 2]) >= command_threshold,
+    )
+    return error * has_command.float()
+
+
 def feet_air_time(env, command_name: str, vel_threshold: float, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
     """奖励双足机器人脚部腾空时间，鼓励迈大步。
     

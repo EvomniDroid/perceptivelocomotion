@@ -700,21 +700,8 @@ class B2RMEventsCfg:
         },
     )
 
-    # Basic B2 gain randomization, restricted to the locomotion joints so the
-    # folded arm remains deterministic.
-    actuator_gains = EventTerm(
-        func=mdp.randomize_actuator_gains,
-        mode="reset",
-        params={
-            "asset_cfg": SceneEntityCfg(
-                "robot", joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"]
-            ),
-            "stiffness_distribution_params": (-20.0, 20.0),
-            "damping_distribution_params": (-1.0, 1.0),
-            "operation": "add",
-            "distribution": "uniform",
-        },
-    )
+    # Use the fixed leg gains from unitree_b2rm.py: Kp=160, Kd=5.
+    actuator_gains = None
 
     push_robot = EventTerm(
         func=mdp.push_by_setting_velocity,
