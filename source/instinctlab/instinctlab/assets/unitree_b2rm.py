@@ -58,9 +58,9 @@ b2rm_18dof_actuators = {
             ".*_calf_joint": 14.0,
         },
         stiffness={
-            ".*_hip_joint": 160.0,
-            ".*_thigh_joint": 160.0,
-            ".*_calf_joint": 160.0,
+            ".*_hip_joint": 250.0,
+            ".*_thigh_joint": 250.0,
+            ".*_calf_joint": 250.0,
         },
         damping={
             ".*_hip_joint": 5.0,
@@ -144,9 +144,9 @@ b2rm_18dof_delayed_actuators = {
         },
         stiffness={
             # Parkour uses the delayed actuator configuration below.
-            ".*_hip_joint": 160.0,
-            ".*_thigh_joint": 160.0,
-            ".*_calf_joint": 160.0,
+            ".*_hip_joint": 250.0,
+            ".*_thigh_joint": 250.0,
+            ".*_calf_joint": 250.0,
         },
         damping={
             ".*_hip_joint": 5.0,

@@ -608,7 +608,7 @@ class B2RMActionsCfg:
     leg_joint_pos = instinct_mdp.JointPositionActionCfg(
         asset_name="robot",
         joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
-        scale=0.4,
+        scale=0.2,
         use_default_offset=True,
     )
     # Preserve arm action dimensions for checkpoint compatibility, but hold a
@@ -700,7 +700,7 @@ class B2RMEventsCfg:
         },
     )
 
-    # Use the fixed leg gains from unitree_b2rm.py: Kp=160, Kd=5.
+    # Use the fixed leg gains from unitree_b2rm.py: Kp=250, Kd=5.
     actuator_gains = None
 
     push_robot = EventTerm(

@@ -158,6 +158,10 @@ class B2RMHandoffRlEnv(InstinctRlEnv):
             policy_age = step[policy_mask] - self._hold_end
             alpha = self._smoothstep(policy_age.float() / self._action_blend_steps)
             action_alpha[policy_mask] = alpha
+            leg_action[policy_mask] = leg_action[policy_mask].clamp(
+                -self.cfg.handoff_policy_action_clip,
+                self.cfg.handoff_policy_action_clip,
+            )
             leg_action[policy_mask] *= alpha[:, None]
 
         gain_alpha = torch.zeros(self.num_envs, device=self.device)

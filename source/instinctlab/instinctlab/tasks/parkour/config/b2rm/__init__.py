@@ -81,3 +81,33 @@ gym.register(
         ),
     },
 )
+
+
+gym.register(
+    id="Instinct-B2RM-Velocity-Handoff-Stand-v0",
+    entry_point="instinctlab.envs:B2RMHandoffRlEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{task_entry}.b2rm_velocity_handoff_cfg:B2RMVelocityHandoffStandEnvCfg"
+        ),
+        "instinct_rl_cfg_entry_point": (
+            f"{agents.__name__}.instinct_rl_velocity_ppo_cfg:B2RMVelocityPPORunnerCfg"
+        ),
+    },
+)
+
+
+gym.register(
+    id="Instinct-B2RM-Velocity-Handoff-Stand-Play-v0",
+    entry_point="instinctlab.envs:B2RMHandoffRlEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{task_entry}.b2rm_velocity_handoff_cfg:B2RMVelocityHandoffStandEnvCfg_PLAY"
+        ),
+        "instinct_rl_cfg_entry_point": (
+            f"{agents.__name__}.instinct_rl_velocity_ppo_cfg:B2RMVelocityPPORunnerCfg"
+        ),
+    },
+)

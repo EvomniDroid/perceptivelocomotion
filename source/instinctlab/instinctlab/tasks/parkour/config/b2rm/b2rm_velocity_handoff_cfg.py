@@ -35,13 +35,14 @@ class B2RMVelocityHandoffCfgMixin:
     handoff_target1_seconds: float = 0.8
     handoff_target2_seconds: float = 0.8
     handoff_hold_seconds: float = 0.4
-    handoff_gain_blend_seconds: float = 1.0
-    handoff_action_blend_seconds: float = 0.8
+    handoff_gain_blend_seconds: float = 0.0
+    handoff_action_blend_seconds: float = 0.5
     handoff_termination_grace_seconds: float = 1.0
-    handoff_stand_kp: float = 600.0
-    handoff_stand_kd: float = 12.67487
-    handoff_policy_kp: float = 160.0
+    handoff_stand_kp: float = 250.0
+    handoff_stand_kd: float = 5.0
+    handoff_policy_kp: float = 250.0
     handoff_policy_kd: float = 5.0
+    handoff_policy_action_clip: float = 1.5
     handoff_debug: bool = False
 
     def _configure_handoff(self) -> None:
@@ -108,3 +109,25 @@ class B2RMVelocityHandoffEnvCfg_PLAY(
     def __post_init__(self):
         super().__post_init__()
         self._configure_handoff()
+
+
+@configclass
+class B2RMVelocityHandoffStandEnvCfg(B2RMVelocityHandoffEnvCfg):
+    """Stage-1 handoff task: zero command on flat ground, no gait demand."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        command = self.commands.base_velocity
+        command.only_positive_lin_vel_x = False
+        command.ranges = mdp.PoseVelocityCommandCfg.Ranges(
+            lin_vel_x=(0.0, 0.0),
+            lin_vel_y=(0.0, 0.0),
+            ang_vel_z=(0.0, 0.0),
+        )
+        command.velocity_ranges = {}
+        command.random_velocity_terrain = []
+
+
+@configclass
+class B2RMVelocityHandoffStandEnvCfg_PLAY(B2RMVelocityHandoffStandEnvCfg):
+    handoff_debug: bool = True
