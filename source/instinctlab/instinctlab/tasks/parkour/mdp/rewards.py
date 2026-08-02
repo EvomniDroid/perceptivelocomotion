@@ -140,6 +140,23 @@ def foot_contact_balance(
     return penalty
 
 
+def feet_contact_deficit(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+    force_threshold: float = 5.0,
+) -> torch.Tensor:
+    """Return the bounded fraction of feet that are not supporting the robot.
+
+    Unlike accumulated air time, this stays in [0, 1] and is suitable for a
+    long zero-command stand episode where one airborne foot must not make the
+    value target grow quadratically with episode time.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_forces = contact_sensor.data.net_forces_w_history[:, -1, sensor_cfg.body_ids]
+    in_contact = torch.norm(contact_forces, dim=-1) > force_threshold
+    return 1.0 - in_contact.float().mean(dim=-1)
+
+
 def feet_air_time_balance(
     env: ManagerBasedRLEnv,
     command_name: str,

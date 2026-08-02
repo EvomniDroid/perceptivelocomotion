@@ -61,17 +61,25 @@ class B2RMHandoffRlEnv(InstinctRlEnv):
             }
         )
 
+        self._start_from_stand = self.cfg.handoff_start_from_stand
         self._target1_steps = self._seconds_to_steps(self.cfg.handoff_target1_seconds)
         self._target2_steps = self._seconds_to_steps(self.cfg.handoff_target2_seconds)
         self._hold_steps = self._seconds_to_steps(self.cfg.handoff_hold_seconds)
         self._gain_blend_steps = self._seconds_to_steps(self.cfg.handoff_gain_blend_seconds)
         self._action_blend_steps = self._seconds_to_steps(self.cfg.handoff_action_blend_seconds)
+        if self._start_from_stand:
+            self._target1_steps = 0
+            self._target2_steps = 0
+            self._hold_steps = 0
         self._target1_end = self._target1_steps
         self._target2_end = self._target1_end + self._target2_steps
         self._hold_end = self._target2_end + self._hold_steps
         self._policy_blend_end = self._hold_end + self._action_blend_steps
-        self._gain_blend_end = self._policy_blend_end + self._gain_blend_steps
-        self._termination_enable_step = self._gain_blend_end + self._seconds_to_steps(
+        # Gain switching starts on the policy takeover frame, in parallel with
+        # action blending. A zero duration reproduces an instantaneous mode switch.
+        self._gain_blend_end = self._hold_end + self._gain_blend_steps
+        self._handoff_end = max(self._policy_blend_end, self._gain_blend_end)
+        self._termination_enable_step = self._handoff_end + self._seconds_to_steps(
             self.cfg.handoff_termination_grace_seconds
         )
         self._debug_phase = None
@@ -80,18 +88,25 @@ class B2RMHandoffRlEnv(InstinctRlEnv):
         self._reset_handoff_state(torch.arange(self.num_envs, device=self.device))
         self.obs_buf = self.observation_manager.compute(update_history=False)
 
+        if self._start_from_stand:
+            startup = "target2 stand reset"
+        else:
+            startup = (
+                f"prone -> target1 ({self.cfg.handoff_target1_seconds:.1f}s) -> "
+                f"target2 ({self.cfg.handoff_target2_seconds:.1f}s) -> "
+                f"hold ({self.cfg.handoff_hold_seconds:.1f}s)"
+            )
         print(
-            "[B2RM HANDOFF] prone -> target1 "
-            f"({self.cfg.handoff_target1_seconds:.1f}s) -> target2 "
-            f"({self.cfg.handoff_target2_seconds:.1f}s) -> hold "
-            f"({self.cfg.handoff_hold_seconds:.1f}s) -> policy blend at stand gains "
-            f"({self.cfg.handoff_action_blend_seconds:.1f}s) -> gain blend "
-            f"({self.cfg.handoff_gain_blend_seconds:.1f}s); termination grace "
+            f"[B2RM HANDOFF] {startup}; gain switch "
+            f"{self.cfg.handoff_stand_kp:.0f}/{self.cfg.handoff_stand_kd:.1f} -> "
+            f"{self.cfg.handoff_policy_kp:.0f}/{self.cfg.handoff_policy_kd:.1f} "
+            f"({self.cfg.handoff_gain_blend_seconds:.1f}s), policy action blend "
+            f"{self.cfg.handoff_action_blend_seconds:.1f}s; termination grace "
             f"{self.cfg.handoff_termination_grace_seconds:.1f}s"
         )
 
     def _seconds_to_steps(self, seconds: float) -> int:
-        return max(1, int(round(seconds / self.step_dt)))
+        return max(0, int(round(seconds / self.step_dt)))
 
     def _joint_targets(self, values: dict[str, float]) -> torch.Tensor:
         targets = torch.empty(self._leg_action_term.action_dim, device=self.device)
@@ -150,13 +165,18 @@ class B2RMHandoffRlEnv(InstinctRlEnv):
 
         stand_mask = torch.logical_and(step >= self._target2_end, step < self._hold_end)
         if stand_mask.any():
-            leg_action[stand_mask] = 0.0
+            # Hold the exact SDK target2 pose until policy takeover. This is
+            # intentionally explicit rather than relying on the action offset.
+            leg_action[stand_mask] = self._normalized_leg_action(self._target2)
 
         policy_mask = step >= self._hold_end
         action_alpha = torch.zeros(self.num_envs, device=self.device)
         if policy_mask.any():
             policy_age = step[policy_mask] - self._hold_end
-            alpha = self._smoothstep(policy_age.float() / self._action_blend_steps)
+            if self._action_blend_steps > 0:
+                alpha = self._smoothstep(policy_age.float() / self._action_blend_steps)
+            else:
+                alpha = torch.ones_like(policy_age, dtype=torch.float)
             action_alpha[policy_mask] = alpha
             leg_action[policy_mask] = leg_action[policy_mask].clamp(
                 -self.cfg.handoff_policy_action_clip,
@@ -165,10 +185,11 @@ class B2RMHandoffRlEnv(InstinctRlEnv):
             leg_action[policy_mask] *= alpha[:, None]
 
         gain_alpha = torch.zeros(self.num_envs, device=self.device)
-        gain_mask = torch.logical_and(step >= self._policy_blend_end, step < self._gain_blend_end)
-        gain_alpha[gain_mask] = self._smoothstep(
-            (step[gain_mask] - self._policy_blend_end).float() / self._gain_blend_steps
-        )
+        gain_mask = torch.logical_and(step >= self._hold_end, step < self._gain_blend_end)
+        if self._gain_blend_steps > 0 and gain_mask.any():
+            gain_alpha[gain_mask] = self._smoothstep(
+                (step[gain_mask] - self._hold_end).float() / self._gain_blend_steps
+            )
         gain_alpha[step >= self._gain_blend_end] = 1.0
         self.handoff_action_alpha.copy_(action_alpha)
         self.handoff_gain_alpha.copy_(gain_alpha)
@@ -234,13 +255,17 @@ class B2RMHandoffRlEnv(InstinctRlEnv):
         self.handoff_step_buf[env_ids] = 0
         self.policy_step_buf[env_ids] = 0
         self.handoff_policy_active[env_ids] = False
-        self.handoff_action_alpha[env_ids] = 0.0
-        self.handoff_gain_alpha[env_ids] = 0.0
+        initial_blend = 1.0 if self._start_from_stand else 0.0
+        self.handoff_action_alpha[env_ids] = initial_blend
+        self.handoff_gain_alpha[env_ids] = initial_blend
 
         root_pose = self._robot.data.root_pose_w[env_ids].clone()
-        root_pose[:, 2] = (
-            self.scene.env_origins[env_ids, 2] + self.cfg.handoff_initial_root_height
+        initial_height = (
+            self.cfg.handoff_stand_root_height
+            if self._start_from_stand
+            else self.cfg.handoff_initial_root_height
         )
+        root_pose[:, 2] = self.scene.env_origins[env_ids, 2] + initial_height
         self._robot.write_root_pose_to_sim(root_pose, env_ids=env_ids)
         self._robot.write_root_velocity_to_sim(
             torch.zeros((len(env_ids), 6), device=self.device),
@@ -249,10 +274,13 @@ class B2RMHandoffRlEnv(InstinctRlEnv):
 
         joint_pos = self._robot.data.default_joint_pos[env_ids].clone()
         joint_vel = torch.zeros_like(joint_pos)
-        joint_pos[:, self._leg_action_term._joint_ids] = self._prone
+        initial_leg_pos = self._target2 if self._start_from_stand else self._prone
+        joint_pos[:, self._leg_action_term._joint_ids] = initial_leg_pos
         self._robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
         self._robot.set_joint_position_target(joint_pos, env_ids=env_ids)
-        self._set_leg_gains_for_envs(env_ids, self.cfg.handoff_stand_kp, self.cfg.handoff_stand_kd)
+        initial_kp = self.cfg.handoff_policy_kp if self._start_from_stand else self.cfg.handoff_stand_kp
+        initial_kd = self.cfg.handoff_policy_kd if self._start_from_stand else self.cfg.handoff_stand_kd
+        self._set_leg_gains_for_envs(env_ids, initial_kp, initial_kd)
 
     def _set_leg_gains_for_envs(
         self,

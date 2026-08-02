@@ -1,102 +1,99 @@
-B2RM velocity real-deploy training plan
-=======================================
+B2RM velocity real-deploy training
+===================================
 
-Goal
-----
-Train a policy that can first take over a stable B2RM standing pose on the
-real robot, then learn velocity locomotion from that same policy interface.
-The two stages use the same 74-D observation and 18-D action layout, so the
-stage-1 checkpoint can be loaded for stage 2.
-
-Shared real-robot settings
---------------------------
-- Leg PD in simulation and deployment: Kp=250, Kd=5 for all 12 leg joints.
-- Leg action scale: 0.2 for the first real-robot validation.
-- Raw policy action clip: [-1.5, 1.5].
-- The handoff environment clips only policy raw actions; scripted target
-  poses are not clipped.
-- Action target: default standing pose plus scale * policy action.
-- Arm action scale: 0.0; the arm remains in its carry pose.
-- Policy control rate: 50 Hz; simulation physics: 200 Hz.
-- Handoff: target2 hold, then 0.5 s residual-action blend.
-- No PD gain blend: the gains remain 250/5 throughout.
-
-Stage 1: stand takeover
+Shared policy interface
 -----------------------
+- All stages use the historical 72-D observation and 18-D action layout.
+- Policy leg PD: Kp=250, Kd=5.
+- Leg action scale: 0.4; raw policy action clip: [-1.5, 1.5].
+- Arm action scale: 0.0; the arm stays in the folded carry pose.
+- Policy control: 50 Hz; simulation physics: 200 Hz.
+- Training terrain: the low-amplitude flat-training terrain set.
+- Startup push and reset force disturbances are disabled.
+
+Stage 0: policy stand pretraining
+---------------------------------
+Task:
+  Instinct-B2RM-Velocity-Stand-v0
+
+Flow on every reset:
+  target2 standing pose at 0.50 m
+  -> Kp=250, Kd=5 from the first simulation step
+  -> policy controls immediately with a zero velocity command
+  -> rewards are active immediately
+  -> hard fall termination gets 0.5 s of initial settling grace
+
+Train from scratch before training the handoff:
+
+  cd ~/isaac/instinctlab
+  python scripts/instinct_rl/train.py \
+    --task=Instinct-B2RM-Velocity-Stand-v0 \
+    --headless \
+    --num_envs=2048 \
+    --max_iterations=5000
+
+Stage 1: instantaneous stand takeover
+-------------------------------------
 Task:
   Instinct-B2RM-Velocity-Handoff-Stand-v0
 
-This stage uses flat ground and zero commands:
-  vx=0, vy=0, wz=0
+Flow on every reset:
+  prone
+  -> 0.8 s target1 interpolation at Kp=1000, Kd=10
+  -> 0.8 s target2 interpolation at Kp=1000, Kd=10
+  -> 0.4 s target2 hold at Kp=1000, Kd=10
+  -> instantaneous gain switch to Kp=250, Kd=5
+  -> policy takes full control on the same frame (no action blend)
+  -> rear calf contact above 50 N for 0.30 s resets the episode
+  -> zero-command policy stand
 
-The scripted handoff still moves prone -> target1 -> target2, then the policy
-learns to hold the standing pose. The important success condition is:
+Warm-start from the accepted Stage-0 checkpoint:
 
-  target2 -> policy takeover -> no kicking, no drift, no fall
-
-Recommended command from the perceptivelocomotion repository:
-
-  ./isaaclab.sh -p scripts/instinct_rl/train.py \
+  cd ~/isaac/instinctlab
+  python scripts/instinct_rl/train.py \
     --task=Instinct-B2RM-Velocity-Handoff-Stand-v0 \
     --headless \
-    --num_envs=4096 \
+    --num_envs=2048 \
     --max_iterations=10000 \
-    --run_name=stage1_stand250
-
-Play/check the stage-1 checkpoint before moving on:
-
-  ./isaaclab.sh -p scripts/instinct_rl/play.py \
-    --task=Instinct-B2RM-Velocity-Handoff-Stand-Play-v0 \
-    --num_envs=1 \
-    --checkpoint <stage1_run>/model_*.pt
-
-Stage-1 acceptance criteria
----------------------------
-- The robot remains upright for at least 30 seconds after takeover.
-- With command (0,0,0), raw actions do not continuously hit the clip limit.
-- Base linear and angular velocity stay close to zero.
-- No single leg repeatedly receives a large isolated residual.
-
-Stage 2: velocity locomotion
-----------------------------
-Load the stage-1 checkpoint and continue with:
-
-  Instinct-B2RM-Velocity-Handoff-v0
-
-Recommended command:
-
-  ./isaaclab.sh -p scripts/instinct_rl/train.py \
-    --task=Instinct-B2RM-Velocity-Handoff-v0 \
-    --headless \
-    --num_envs=4096 \
-    --max_iterations=30000 \
     --resume \
-    --load_run <stage1_run> \
-    --checkpoint model_10000.pt \
-    --run_name=stage2_velocity250
+    --load_run=/absolute/path/to/stage0_run \
+    --checkpoint=model_5000.pt
 
-Start stage 2 with a gentle command curriculum:
-- many zero-command samples for standing recovery;
-- vx in 0.05 to 0.10 m/s;
-- then vx in 0.10 to 0.30 m/s;
-- add yaw and terrain only after flat-ground walking is stable.
+Acceptance check:
+- Remains upright for at least 30 seconds after takeover.
+- No isolated leg kick during the 1000 -> 250 gain switch.
+- Raw actions do not continuously hit [-1.5, 1.5].
+- Base velocity remains close to zero.
 
-Do not change PD, action scale, or action ordering between the two stages.
-First establish a stable 250/5 policy. Only then test action scale 0.3 or 0.4.
+Stage 2: forward walking
+------------------------
+Task:
+  Instinct-B2RM-Velocity-Handoff-Walk-v0
 
-Real-robot validation
----------------------
-Build the deploy program after the new ONNX is exported:
+Flow on every reset:
+  historical converged velocity-baseline reset and PPO flow
+  -> target2 standing pose at 0.50 m, Kp=250, Kd=5
+  -> leg action scale 0.4 (same as commit b8329be)
+  -> forward command sampled uniformly from 0.0 to 0.5 m/s
+  -> no handoff action blend, termination grace, or gated calf reset
 
-  cd ~/b2rmlow/deploy/b2rm_velocity_cpp
-  cmake --build build -j2
-  ./run_velocity_deploy.sh enp3s0 0 0 0
+Train this baseline from scratch first. Its accepted checkpoint can later
+warm-start the stand-handoff fine-tuning task because their policy observation
+and action layouts are identical:
 
-Run the passive Kp/Kd plotter in another terminal:
+  cd ~/isaac/instinctlab
+  python scripts/instinct_rl/train.py \
+    --task=Instinct-B2RM-Velocity-Handoff-Walk-v0 \
+    --headless \
+    --num_envs=2048 \
+    --max_iterations=5000
 
-  cd ~/b2rmlow/deploy/b2rm_pd_monitor_cpp
-  ./run_pd_monitor.sh enp3s0
+Do not add yaw, lateral velocity, rough terrain, pushes, payload
+randomization, or PD randomization until this flat forward policy passes
+Isaac Play and real-robot low-speed validation.
 
-The monitor must show 250/5 during both target2 hold and policy control.
-Stop immediately if one leg has a large isolated target jump or if the raw
-policy action repeatedly clips.
+Play tasks
+----------
+- Instinct-B2RM-Velocity-Stand-Play-v0
+- Instinct-B2RM-Velocity-Handoff-Stand-Play-v0
+- Instinct-B2RM-Velocity-Handoff-Walk-Play-v0

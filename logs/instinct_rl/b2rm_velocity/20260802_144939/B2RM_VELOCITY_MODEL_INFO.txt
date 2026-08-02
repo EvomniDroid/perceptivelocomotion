@@ -1,0 +1,50 @@
+B2RM velocity model 20260802_144939
+====================================
+
+Purpose
+-------
+Proprioceptive flat-ground forward velocity policy used as the stable
+warm-start for the 1000/10 -> 250/5 instantaneous stand-handoff task.
+
+Training
+--------
+Task: Instinct-B2RM-Velocity-Handoff-Walk-v0
+Checkpoint: model_3000.pt
+Policy: PPO MoE, 4 experts
+Control frequency: 50 Hz
+Physics frequency: 200 Hz
+Observation: 72 dimensions
+Action: 18 dimensions (12 policy-controlled legs + 6 fixed arm actions)
+Command: vx in [0.0, 0.5] m/s, vy=0.0, wz=0.0
+Terrain: low-amplitude flat-training terrain set
+
+Robot control
+-------------
+Leg Kp: 250
+Leg Kd: 5
+Leg action scale: 0.4 rad
+Arm action scale: 0.0 (folded carry pose)
+Hip/thigh effort limit: 200 Nm
+Calf effort limit: 320 Nm
+Hip/thigh velocity limit: 23 rad/s
+Calf velocity limit: 14 rad/s
+
+Iteration 3000 summary
+----------------------
+Mean reward: 118.9072
+Mean episode length: 916.42 / 1000 steps
+Timeout rate: 0.9173
+Calf-contact termination rate: 0.0798
+Mean XY velocity error: 0.1009 m/s
+Velocity tracking exponential score: 0.8826
+
+Export
+------
+ONNX: exported/actor.onnx
+ONNX input: input [1, 72]
+ONNX output: output [1, 18]
+ONNX opset: 12
+model_3000.pt SHA256:
+67889d51e291ea7261f45fffdc7219cb67a1203ea9ced4d6246ebfef5fe69d93
+actor.onnx SHA256:
+4dbd13c8744fe04530f6a050855809daa4d39315c3fe08247437f46cd78b7c67
