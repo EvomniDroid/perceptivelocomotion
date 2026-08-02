@@ -64,13 +64,64 @@ parser.add_argument("--env_cfg", action="store_true", default=False, help="从�
 parser.add_argument("--agent_cfg", action="store_true", default=False, help="从文件加载智能体配置。")
 parser.add_argument("--sample", action="store_true", default=False, help="使用随机采样动作而非策略。")
 parser.add_argument("--zero_act_until", type=int, default=0, help="到指定步数前动作为零。")
+parser.add_argument(
+    "--walk_load_run",
+    type=str,
+    default=None,
+    help="启用双策略流程，并从该运行目录加载第二个行走策略。",
+)
+parser.add_argument(
+    "--walk_checkpoint",
+    type=str,
+    default="model_3000.pt",
+    help="双策略流程使用的行走策略checkpoint。",
+)
+parser.add_argument(
+    "--stand_policy_seconds",
+    type=float,
+    default=3.0,
+    help="低增益接管后，站立策略独立稳定站立的时间。",
+)
+parser.add_argument(
+    "--walk_policy_blend_seconds",
+    type=float,
+    default=1.5,
+    help="从站立策略平滑混合到行走策略的时间；设为0表示瞬时切换。",
+)
+parser.add_argument("--walk_cmd_vx", type=float, default=0.10, help="双策略流程最终前向速度命令。")
+parser.add_argument("--walk_cmd_vy", type=float, default=0.0, help="双策略流程最终侧向速度命令。")
+parser.add_argument("--walk_cmd_wz", type=float, default=0.0, help="双策略流程最终偏航角速度命令。")
 parser.add_argument("--keyboard_control", action="store_true", default=False, help="启用键盘控制(WASD走, QE转, X归零)。")
 parser.add_argument("--auto_policy", action="store_true", default=False, help="自动策略模式：所有 env 跑 base_velocity 命令，不接收键盘输入。")
-parser.add_argument("--keyboard_linvel_step", type=float, default=0.5, help="键盘每次调整的线速度增量。")
+parser.add_argument("--keyboard_linvel_step", type=float, default=0.1, help="键盘每次调整的线速度增量。")
 parser.add_argument("--keyboard_angvel", type=float, default=1.0, help="键盘控制的最大角速度。")
 parser.add_argument("--keyboard_angvel_step", type=float, default=0.1, help="键盘每次调整的角速度增量。")
 parser.add_argument("--free_view", action="store_true", default=False, help="自由视角（不跟随机器人）。")
+parser.add_argument(
+    "--follow_view",
+    action="store_true",
+    default=False,
+    help="固定跟随env 0的robot根节点，适合观察完整起立和策略切换流程。",
+)
 parser.add_argument("--debug_ray", action="store_true", default=False, help="启用射线检测可视化。")
+parser.add_argument(
+    "--plot_leg_pd",
+    action="store_true",
+    default=False,
+    help="实时显示12个腿电机的Kp和Kd曲线，并在增益变化时打印实际值。",
+)
+parser.add_argument(
+    "--pd_plot_history",
+    type=int,
+    default=500,
+    help="PD曲线保留的历史步数。",
+)
+parser.add_argument(
+    "--pd_plot_interval",
+    type=int,
+    default=5,
+    help="每隔多少个仿真步刷新一次PD曲线。",
+)
 parser.add_argument(
     "--disable_arm_disturbance",
     action="store_true",
@@ -198,6 +249,138 @@ from instinctlab.terrains.terrain_generator import FiledTerrainGenerator
 
 RGB_WINDOW_NAME = "B2RM First-Person RGB"
 DEPTH_WINDOW_NAME = "B2RM First-Person Depth"
+KP_WINDOW_NAME = "B2RM Leg Kp"
+KD_WINDOW_NAME = "B2RM Leg Kd"
+
+
+class _LegPdPlotter:
+    """Plot the effective gains of every leg motor in two live windows."""
+
+    def __init__(self, env, history_steps: int, update_interval: int):
+        from collections import deque
+        from matplotlib import colormaps
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        from matplotlib.figure import Figure
+
+        unwrapped = env.unwrapped
+        robot = unwrapped.scene["robot"]
+        if "legs" not in robot.actuators:
+            raise RuntimeError("Robot has no actuator group named 'legs'.")
+        self._actuator = robot.actuators["legs"]
+        self._step_dt = float(unwrapped.step_dt)
+        self._history_steps = max(2, int(history_steps))
+        self._update_interval = max(1, int(update_interval))
+        self._times = deque(maxlen=self._history_steps)
+        self._kp_history = deque(maxlen=self._history_steps)
+        self._kd_history = deque(maxlen=self._history_steps)
+        self._last_printed_kp = None
+        self._last_printed_kd = None
+
+        action_term = getattr(unwrapped, "_leg_action_term", None)
+        if action_term is not None:
+            self._joint_names = list(action_term._joint_names)
+        else:
+            indices = self._actuator.joint_indices
+            if isinstance(indices, slice):
+                indices = range(*indices.indices(len(robot.joint_names)))
+            self._joint_names = [robot.joint_names[index] for index in indices]
+
+        num_motors = int(self._actuator.stiffness.shape[-1])
+        if len(self._joint_names) != num_motors:
+            self._joint_names = [f"leg_motor_{index}" for index in range(num_motors)]
+
+        self._kp_figure = Figure(figsize=(9.0, 4.8), dpi=100, tight_layout=True)
+        self._kd_figure = Figure(figsize=(9.0, 4.8), dpi=100, tight_layout=True)
+        self._kp_canvas = FigureCanvasAgg(self._kp_figure)
+        self._kd_canvas = FigureCanvasAgg(self._kd_figure)
+        self._kp_axis = self._kp_figure.add_subplot(111)
+        self._kd_axis = self._kd_figure.add_subplot(111)
+        colors = colormaps["tab20"].resampled(num_motors)
+        self._kp_lines = []
+        self._kd_lines = []
+        for index, joint_name in enumerate(self._joint_names):
+            color = colors(index)
+            (kp_line,) = self._kp_axis.plot([], [], color=color, linewidth=1.6, label=joint_name)
+            (kd_line,) = self._kd_axis.plot([], [], color=color, linewidth=1.6, label=joint_name)
+            self._kp_lines.append(kp_line)
+            self._kd_lines.append(kd_line)
+
+        self._configure_axis(self._kp_axis, "Effective leg stiffness (Kp)", "Kp")
+        self._configure_axis(self._kd_axis, "Effective leg damping (Kd)", "Kd")
+        cv2.namedWindow(KP_WINDOW_NAME, cv2.WINDOW_NORMAL)
+        cv2.namedWindow(KD_WINDOW_NAME, cv2.WINDOW_NORMAL)
+        print("[PD PLOT] joint order: " + ", ".join(self._joint_names))
+
+    @staticmethod
+    def _configure_axis(axis, title: str, ylabel: str) -> None:
+        axis.set_title(title)
+        axis.set_xlabel("Simulation time (s)")
+        axis.set_ylabel(ylabel)
+        axis.grid(True, alpha=0.25)
+        axis.legend(loc="center left", bbox_to_anchor=(1.01, 0.5), fontsize=7)
+
+    @staticmethod
+    def _env0_values(values: torch.Tensor) -> np.ndarray:
+        if values.ndim == 1:
+            return values.detach().cpu().numpy().copy()
+        return values[0].detach().cpu().numpy().copy()
+
+    def update(self, timestep: int) -> str | None:
+        kp = self._env0_values(self._actuator.stiffness)
+        kd = self._env0_values(self._actuator.damping)
+        self._times.append(timestep * self._step_dt)
+        self._kp_history.append(kp)
+        self._kd_history.append(kd)
+
+        gains_changed = (
+            self._last_printed_kp is None
+            or not np.allclose(kp, self._last_printed_kp, atol=1e-5)
+            or not np.allclose(kd, self._last_printed_kd, atol=1e-5)
+        )
+        if gains_changed:
+            print(
+                f"[PD] step={timestep} t={timestep * self._step_dt:.3f}s "
+                f"Kp={np.array2string(kp, precision=2, separator=',')} "
+                f"Kd={np.array2string(kd, precision=2, separator=',')}"
+            )
+            self._last_printed_kp = kp.copy()
+            self._last_printed_kd = kd.copy()
+
+        if timestep % self._update_interval != 0:
+            return self._read_key()
+        times = np.asarray(self._times)
+        kp_history = np.asarray(self._kp_history)
+        kd_history = np.asarray(self._kd_history)
+        self._draw_plot(self._kp_axis, self._kp_lines, self._kp_canvas, times, kp_history, KP_WINDOW_NAME)
+        self._draw_plot(self._kd_axis, self._kd_lines, self._kd_canvas, times, kd_history, KD_WINDOW_NAME)
+        return self._read_key()
+
+    @staticmethod
+    def _read_key() -> str | None:
+        key_code = cv2.waitKey(1) & 0xFF
+        if key_code in (ord("w"), ord("s"), ord("a"), ord("d"), ord("q"), ord("e"), ord("x")):
+            return chr(key_code).upper()
+        return None
+
+    @staticmethod
+    def _draw_plot(axis, lines, canvas, times, values, window_name: str) -> None:
+        for index, line in enumerate(lines):
+            line.set_data(times, values[:, index])
+        axis.relim()
+        axis.autoscale_view()
+        canvas.draw()
+        rgba = np.asarray(canvas.buffer_rgba())
+        bgr = cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGR)
+        cv2.imshow(window_name, bgr)
+
+    @staticmethod
+    def close() -> None:
+        for window_name in (KP_WINDOW_NAME, KD_WINDOW_NAME):
+            try:
+                cv2.destroyWindow(window_name)
+            except Exception:
+                pass
+        cv2.waitKey(1)
 
 
 def _build_playable_physical_terrain_cfg(base_cfg, terrain_names: list[str]) -> FiledTerrainGeneratorCfg:
@@ -312,6 +495,13 @@ if args_cli.debug:
 
 def main():
     """Play with Instinct-RL agent."""
+    if args_cli.free_view and args_cli.follow_view:
+        raise ValueError("--free_view and --follow_view cannot be enabled together.")
+    if args_cli.walk_load_run is not None and args_cli.useonnx:
+        raise ValueError("The dual-policy play pipeline does not support --useonnx; load both PyTorch checkpoints.")
+    if args_cli.stand_policy_seconds < 0.0 or args_cli.walk_policy_blend_seconds < 0.0:
+        raise ValueError("Policy phase durations must be non-negative.")
+
     # parse configuration
     env_cfg = parse_env_cfg(
         args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
@@ -428,11 +618,18 @@ def main():
     if args_cli.keyboard_control:
         env_cfg.scene.num_envs = 1
         env_cfg.episode_length_s = 1e10
-        if args_cli.free_view:
-            if hasattr(env_cfg, "viewer"):
-                env_cfg.viewer.origin_type = "world"
-                env_cfg.viewer.eye = (4.0, 4.0, 4.0)
-                env_cfg.viewer.lookat = (0.0, 0.0, 0.0)
+
+    if args_cli.free_view and hasattr(env_cfg, "viewer"):
+        env_cfg.viewer.origin_type = "world"
+        env_cfg.viewer.eye = (4.0, 4.0, 4.0)
+        env_cfg.viewer.lookat = (0.0, 0.0, 0.0)
+    elif args_cli.follow_view and hasattr(env_cfg, "viewer"):
+        env_cfg.viewer.origin_type = "asset_root"
+        env_cfg.viewer.asset_name = "robot"
+        env_cfg.viewer.env_index = 0
+        env_cfg.viewer.eye = (4.0, 0.75, 1.5)
+        env_cfg.viewer.lookat = (0.0, 0.75, 0.35)
+        print("[INFO] --follow_view: camera follows env 0 robot root.")
 
     if args_cli.debug_ray:
         env_cfg.scene.left_height_scanner.debug_vis = True
@@ -646,7 +843,14 @@ def main():
     env = InstinctRlVecEnvWrapper(env)
 
     # load previously trained model
-    ppo_runner = OnPolicyRunner(env, agent_cfg_dict, log_dir=None, device=agent_cfg.device)
+    # OnPolicyRunner consumes parts of its configuration with pop(). Keep the
+    # original dictionary intact so a second runner can load the walking policy.
+    ppo_runner = OnPolicyRunner(
+        env,
+        copy.deepcopy(agent_cfg_dict),
+        log_dir=None,
+        device=agent_cfg.device,
+    )
     if agent_cfg.load_run is not None:
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         ppo_runner.load(resume_path)
@@ -656,6 +860,39 @@ def main():
         policy = ppo_runner.alg.actor_critic.act
     else:
         policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
+
+    walk_policy = None
+    walk_resume_path = None
+    if args_cli.walk_load_run is not None:
+        walk_load_run = args_cli.walk_load_run.rstrip("/\\")
+        if os.path.isabs(walk_load_run):
+            walk_resume_path = get_checkpoint_path(
+                os.path.dirname(walk_load_run),
+                os.path.basename(walk_load_run),
+                args_cli.walk_checkpoint,
+            )
+        else:
+            walk_resume_path = get_checkpoint_path(
+                log_root_path,
+                walk_load_run,
+                args_cli.walk_checkpoint,
+            )
+        walk_runner = OnPolicyRunner(
+            env,
+            copy.deepcopy(agent_cfg_dict),
+            log_dir=None,
+            device=agent_cfg.device,
+        )
+        print(f"[PIPELINE] Loading walking policy checkpoint from: {walk_resume_path}")
+        walk_runner.load(walk_resume_path)
+        walk_policy = walk_runner.get_inference_policy(device=env.unwrapped.device)
+        print(
+            "[PIPELINE] scripted stand-up -> stand policy "
+            f"({args_cli.stand_policy_seconds:.2f}s) -> walking blend "
+            f"({args_cli.walk_policy_blend_seconds:.2f}s) -> walking policy; "
+            f"final cmd=({args_cli.walk_cmd_vx:+.2f}, {args_cli.walk_cmd_vy:+.2f}, "
+            f"{args_cli.walk_cmd_wz:+.2f})"
+        )
 
     # export policy to onnx/jit
     if agent_cfg.load_run is not None:
@@ -706,6 +943,11 @@ def main():
 
     override_command = torch.zeros(env.num_envs, 3, device=env.device)
     command_obs_slice = get_obs_slice(env.get_obs_segments(), "velocity_commands")
+    keyboard_command_enabled = args_cli.keyboard_control or walk_policy is not None
+
+    def set_velocity_command(observation: torch.Tensor, command: torch.Tensor) -> None:
+        repeats = command_obs_slice[1][0] // 3
+        observation[:, command_obs_slice[0]] = command.repeat(1, repeats)
 
     cmd_display_names = {"W": "前进", "S": "减速", "A": "左转", "D": "右转", "Q": "停转", "E": "停转", "X": "急停"}
     _print_vel_help = True
@@ -726,8 +968,42 @@ def main():
     print("  长按 W / S / A / D 可累计调整速度")
     print("=" * 60)
 
+    def apply_keyboard_command(name: str) -> None:
+        if name == "X":
+            override_command[:] = 0.0
+        elif name == "W":
+            override_command[:, 0] += args_cli.keyboard_linvel_step
+        elif name == "S":
+            override_command[:, 0] = torch.clamp(
+                override_command[:, 0] - args_cli.keyboard_linvel_step,
+                min=0.0,
+            )
+        elif name == "A":
+            override_command[:, 2] = torch.clamp(
+                override_command[:, 2] + args_cli.keyboard_angvel_step,
+                min=-args_cli.keyboard_angvel,
+                max=args_cli.keyboard_angvel,
+            )
+        elif name == "D":
+            override_command[:, 2] = torch.clamp(
+                override_command[:, 2] - args_cli.keyboard_angvel_step,
+                min=-args_cli.keyboard_angvel,
+                max=args_cli.keyboard_angvel,
+            )
+        elif name in ("Q", "E"):
+            override_command[:, 2] = 0.0
+        vx = override_command[0, 0].item()
+        vy = override_command[0, 1].item()
+        wz = override_command[0, 2].item()
+        print(
+            f"[键盘] {cmd_display_names.get(name, name):>4s} | "
+            f"cmd=(v_x={vx:+.2f}, v_y={vy:+.2f}, ω_z={wz:+.2f})"
+        )
+
     def on_keyboard_input(e):
         global _print_vel_help
+        if not keyboard_command_enabled:
+            return
         key_map = {
             carb.input.KeyboardInput.W: "W",
             carb.input.KeyboardInput.S: "S",
@@ -740,30 +1016,7 @@ def main():
         if e.input in key_map:
             name = key_map[e.input]
             if e.type == KeyboardEventType.KEY_PRESS or e.type == KeyboardEventType.KEY_REPEAT:
-                if name == "X":
-                    override_command[:] = 0.0
-                elif name == "W":
-                    override_command[:, 0] += args_cli.keyboard_linvel_step
-                elif name == "S":
-                    override_command[:, 0] = torch.clamp(override_command[:, 0] - args_cli.keyboard_linvel_step, min=0.0)
-                elif name == "A":
-                    override_command[:, 2] = torch.clamp(
-                        override_command[:, 2] + args_cli.keyboard_angvel_step,
-                        min=-args_cli.keyboard_angvel,
-                        max=args_cli.keyboard_angvel,
-                    )
-                elif name == "D":
-                    override_command[:, 2] = torch.clamp(
-                        override_command[:, 2] - args_cli.keyboard_angvel_step,
-                        min=-args_cli.keyboard_angvel,
-                        max=args_cli.keyboard_angvel,
-                    )
-                elif name in ("Q", "E"):
-                    override_command[:, 2] = 0.0
-                vx = override_command[0, 0].item()
-                vy = override_command[0, 1].item()
-                wz = override_command[0, 2].item()
-                print(f"[键盘] {cmd_display_names.get(name, name):>4s} | cmd=(v_x={vx:+.2f}, v_y={vy:+.2f}, ω_z={wz:+.2f})")
+                apply_keyboard_command(name)
                 _print_vel_help = True
 
     app_window = omni.appwindow.get_default_app_window()
@@ -781,6 +1034,27 @@ def main():
     episode_counts = {}  # track episodes per env
     num_envs = env.unwrapped.scene.num_envs
     last_debug_cmd = torch.tensor([999.0, 999.0, 999.0], device=env.device)
+    pipeline_phase = None
+    fixed_walk_command = torch.tensor(
+        [args_cli.walk_cmd_vx, args_cli.walk_cmd_vy, args_cli.walk_cmd_wz],
+        device=env.device,
+    ).repeat(env.num_envs, 1)
+    if walk_policy is not None:
+        # In the dual-policy pipeline, fixed CLI commands are the keyboard
+        # command's initial value. Keyboard input is enabled automatically.
+        override_command.copy_(fixed_walk_command)
+        print(
+            "[PIPELINE] keyboard control enabled automatically; "
+            f"initial cmd=({override_command[0, 0].item():+.2f}, "
+            f"{override_command[0, 1].item():+.2f}, {override_command[0, 2].item():+.2f})"
+        )
+    pd_plotter = None
+    if args_cli.plot_leg_pd:
+        pd_plotter = _LegPdPlotter(
+            env,
+            history_steps=args_cli.pd_plot_history,
+            update_interval=args_cli.pd_plot_interval,
+        )
 
     def summarize_termination(env_id, infos):
         episode_info = infos.get("episode", {})
@@ -811,9 +1085,55 @@ def main():
         # run everything in inference mode
         with torch.inference_mode():
             # agent stepping
-            if args_cli.keyboard_control:
-                obs[:, command_obs_slice[0]] = override_command.repeat(1, command_obs_slice[1][0] // 3)
-            actions = policy(obs)
+            if walk_policy is not None:
+                unwrapped = env.unwrapped
+                policy_active = getattr(
+                    unwrapped,
+                    "handoff_policy_active",
+                    torch.ones(env.num_envs, dtype=torch.bool, device=env.device),
+                )
+                policy_steps = getattr(
+                    unwrapped,
+                    "policy_step_buf",
+                    torch.zeros(env.num_envs, dtype=torch.long, device=env.device),
+                )
+                policy_age = policy_steps.float() * float(unwrapped.step_dt)
+                blend_age = policy_age - args_cli.stand_policy_seconds
+                if args_cli.walk_policy_blend_seconds > 0.0:
+                    walk_alpha = (blend_age / args_cli.walk_policy_blend_seconds).clamp(0.0, 1.0)
+                    walk_alpha = walk_alpha * walk_alpha * (3.0 - 2.0 * walk_alpha)
+                else:
+                    walk_alpha = (blend_age >= 0.0).float()
+                walk_alpha = torch.where(policy_active, walk_alpha, torch.zeros_like(walk_alpha))
+
+                target_walk_command = override_command
+                stand_obs = obs.clone()
+                walk_obs = obs.clone()
+                set_velocity_command(stand_obs, torch.zeros_like(target_walk_command))
+                set_velocity_command(walk_obs, target_walk_command)
+                stand_actions = policy(stand_obs)
+                walk_actions = walk_policy(walk_obs)
+                actions = torch.lerp(stand_actions, walk_actions, walk_alpha[:, None])
+
+                if not bool(policy_active[0].item()):
+                    current_pipeline_phase = "scripted_stand_up"
+                elif float(policy_age[0].item()) < args_cli.stand_policy_seconds:
+                    current_pipeline_phase = "stand_policy"
+                elif float(walk_alpha[0].item()) < 1.0:
+                    current_pipeline_phase = "walking_blend"
+                else:
+                    current_pipeline_phase = "walking_policy"
+                if current_pipeline_phase != pipeline_phase:
+                    pipeline_phase = current_pipeline_phase
+                    print(
+                        f"[PIPELINE] env0 phase={pipeline_phase} "
+                        f"policy_age={policy_age[0].item():.2f}s "
+                        f"walk_alpha={walk_alpha[0].item():.3f}"
+                    )
+            else:
+                if args_cli.keyboard_control:
+                    set_velocity_command(obs, override_command)
+                actions = policy(obs)
             if args_cli.useonnx:
                 torch_actions = actions
                 actions = onnx_policy(obs)
@@ -828,9 +1148,14 @@ def main():
             # env stepping
             obs, rewards, dones, infos = env.step(actions)
 
+            if pd_plotter is not None:
+                plot_key = pd_plotter.update(timestep)
+                if keyboard_command_enabled and plot_key is not None:
+                    apply_keyboard_command(plot_key)
+
             # 打印实际速度 vs 命令速度（命令变化时或每200步）
             cmd_changed = not torch.allclose(override_command[0], last_debug_cmd, atol=1e-4)
-            if args_cli.keyboard_control and vel_slice is not None and (cmd_changed or timestep % 200 == 0):
+            if keyboard_command_enabled and vel_slice is not None and (cmd_changed or timestep % 200 == 0):
                 vel_start = vel_slice[0].start if isinstance(vel_slice[0], slice) else vel_slice[0]
                 actual_vel = obs[0, vel_start:vel_start+3].cpu()
                 cmd = override_command[0].cpu()
@@ -979,6 +1304,8 @@ def main():
 
     # close the simulator
     env.close()
+    if pd_plotter is not None:
+        pd_plotter.close()
     if args_cli.show_first_person_rgbd:
         try:
             depth_window_name = f"{DEPTH_WINDOW_NAME} ({args_cli.first_person_depth_source})"
