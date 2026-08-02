@@ -8,6 +8,13 @@ Checkpoint:
   model_5000.pt
   SHA256: 74d7fd60587d108962d764edca020090525b68db7b607c173f2419fb4a37af08
 
+ONNX:
+  exported/actor.onnx
+  SHA256: 16ab635234e9ebb10965bb5b28b90b17f04ef67df060ea0081940a0fc02e92cf
+  opset: 12
+  input: [1, 72]
+  output: [1, 18]
+
 Policy interface:
   observation dimension: 72
   action dimension: 18

@@ -57,6 +57,12 @@ parser.add_argument(
 parser.add_argument("--num_envs", type=int, default=None, help="仿真环境数量。")
 parser.add_argument("--task", type=str, default=None, help="任务名称。")
 parser.add_argument("--exportonnx", action="store_true", default=False, help="将策略导出为ONNX模型。")
+parser.add_argument(
+    "--export_only",
+    action="store_true",
+    default=False,
+    help="导出ONNX后立即退出，不进入play仿真循环；需要同时指定--exportonnx。",
+)
 parser.add_argument("--useonnx", action="store_true", default=False, help="使用ONNX模型进行推理。")
 parser.add_argument("--debug", action="store_true", default=False, help="启用调试模式。")
 parser.add_argument("--no_resume", default=None, action="store_true", help="强制使用no_resume模式。")
@@ -495,6 +501,8 @@ if args_cli.debug:
 
 def main():
     """Play with Instinct-RL agent."""
+    if args_cli.export_only and not args_cli.exportonnx:
+        raise ValueError("--export_only requires --exportonnx.")
     if args_cli.free_view and args_cli.follow_view:
         raise ValueError("--free_view and --follow_view cannot be enabled together.")
     if args_cli.walk_load_run is not None and args_cli.useonnx:
@@ -903,6 +911,10 @@ def main():
                 os.makedirs(export_model_dir)
             obs, _ = env.get_observations()
             ppo_runner.alg.actor_critic.export_as_onnx(obs, export_model_dir)
+            if args_cli.export_only:
+                print(f"[INFO]: ONNX export completed: {export_model_dir}")
+                env.close()
+                return
 
     # use the exported model for inference
     if args_cli.useonnx:
