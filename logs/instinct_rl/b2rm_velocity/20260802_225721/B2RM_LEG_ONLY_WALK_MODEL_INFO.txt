@@ -1,0 +1,8 @@
+Model: B2RM leg-only velocity walk
+Task: Instinct-B2RM-LegOnly-Velocity-Handoff-Walk-v0
+Checkpoint: model_1000.pt
+ONNX: exported/actor.onnx
+Policy interface: 50 observation values -> 12 leg actions
+Policy PD: Kp=250, Kd=5
+Arm: excluded from policy observations/actions and held at the folded pose by a separate fixed PD action term
+Training result: usable baseline; recent time-out rate about 88% and calf-contact termination rate about 12%

@@ -11,6 +11,9 @@ import instinctlab.tasks.parkour.mdp as mdp
 from instinctlab.terrains.shared_terrain_cfg import FLAT_TRAINING_SUB_TERRAINS
 
 from .b2rm_velocity_cfg import (
+    B2RMLegOnlyActionsCfg,
+    B2RMLegOnlyVelocityObservationsCfg,
+    B2RMLegOnlyVelocityRewardsCfgFinal,
     B2RMVelocityCriticObsCfg,
     B2RMVelocityEnvCfg,
     B2RMVelocityEnvCfg_PLAY,
@@ -225,3 +228,34 @@ class B2RMVelocityHandoffWalkEnvCfg_PLAY(B2RMVelocityHandoffWalkEnvCfg):
         super().__post_init__()
         self.scene.num_envs = 1
         self.commands.base_velocity.debug_vis = True
+
+
+@configclass
+class B2RMLegOnlyVelocityHandoffWalkEnvCfg(B2RMVelocityHandoffWalkEnvCfg):
+    """Kp=250 velocity baseline with a 50-D observation and 12-D action."""
+
+    observations: B2RMLegOnlyVelocityObservationsCfg = B2RMLegOnlyVelocityObservationsCfg()
+    actions: B2RMLegOnlyActionsCfg = B2RMLegOnlyActionsCfg()
+    rewards: B2RMLegOnlyVelocityRewardsCfgFinal = B2RMLegOnlyVelocityRewardsCfgFinal()
+
+
+@configclass
+class B2RMLegOnlyVelocityHandoffWalkEnvCfg_PLAY(B2RMLegOnlyVelocityHandoffWalkEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 1
+        self.commands.base_velocity.debug_vis = True
+
+
+@configclass
+class B2RMLegOnlyVelocityHandoffStandEnvCfg(B2RMVelocityHandoffStandEnvCfg):
+    """Instantaneous stand handoff with a 50-D observation and 12-D action."""
+
+    observations: B2RMLegOnlyVelocityObservationsCfg = B2RMLegOnlyVelocityObservationsCfg()
+    actions: B2RMLegOnlyActionsCfg = B2RMLegOnlyActionsCfg()
+    rewards: B2RMLegOnlyVelocityRewardsCfgFinal = B2RMLegOnlyVelocityRewardsCfgFinal()
+
+
+@configclass
+class B2RMLegOnlyVelocityHandoffStandEnvCfg_PLAY(B2RMLegOnlyVelocityHandoffStandEnvCfg):
+    handoff_debug: bool = True

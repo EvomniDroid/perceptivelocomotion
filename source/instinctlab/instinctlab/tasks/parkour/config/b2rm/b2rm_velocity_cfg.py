@@ -10,10 +10,15 @@ import instinctlab.tasks.parkour.mdp as mdp
 from instinctlab.managers import MultiRewardCfg
 
 from .b2rm_parkour_cfg import (
+    ARM_FOLDED_OFFSET,
+    B2RMActionsCfg,
     B2RMParkourEnvCfg,
     B2RMParkourEnvCfg_PLAY,
     B2RMRewardsCfg,
 )
+
+
+LEG_JOINT_NAMES = [".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"]
 
 
 @configclass
@@ -56,6 +61,54 @@ class B2RMVelocityCriticObsCfg(ObsGroup):
 class B2RMVelocityObservationsCfg:
     policy: B2RMVelocityPolicyObsCfg = B2RMVelocityPolicyObsCfg()
     critic: B2RMVelocityCriticObsCfg = B2RMVelocityCriticObsCfg()
+
+
+@configclass
+class B2RMLegOnlyVelocityPolicyObsCfg(B2RMVelocityPolicyObsCfg):
+    """Velocity observations containing leg joints only."""
+
+    joint_pos = ObsTerm(
+        func=mdp.joint_pos_rel,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=LEG_JOINT_NAMES)},
+        noise=Unoise(n_min=-0.01, n_max=0.01),
+        clip=(-10, 10),
+    )
+    joint_vel = ObsTerm(
+        func=mdp.joint_vel_rel,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=LEG_JOINT_NAMES)},
+        noise=Unoise(n_min=-0.01, n_max=0.01),
+        clip=(-50, 50),
+    )
+
+
+@configclass
+class B2RMLegOnlyVelocityCriticObsCfg(B2RMVelocityCriticObsCfg):
+    joint_pos = ObsTerm(
+        func=mdp.joint_pos_rel,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=LEG_JOINT_NAMES)},
+    )
+    joint_vel = ObsTerm(
+        func=mdp.joint_vel_rel,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=LEG_JOINT_NAMES)},
+    )
+
+
+@configclass
+class B2RMLegOnlyVelocityObservationsCfg:
+    policy: B2RMLegOnlyVelocityPolicyObsCfg = B2RMLegOnlyVelocityPolicyObsCfg()
+    critic: B2RMLegOnlyVelocityCriticObsCfg = B2RMLegOnlyVelocityCriticObsCfg()
+
+
+@configclass
+class B2RMLegOnlyActionsCfg(B2RMActionsCfg):
+    """Twelve leg actions plus a zero-dimensional fixed arm holder."""
+
+    arm_joint_pos = instinct_mdp.FixedJointPositionActionCfg(
+        asset_name="robot",
+        joint_names=list(ARM_FOLDED_OFFSET),
+        joint_pos=ARM_FOLDED_OFFSET,
+        preserve_order=True,
+    )
 
 
 @configclass
@@ -116,6 +169,18 @@ class B2RMVelocityRewardsCfg(B2RMRewardsCfg):
 @configclass
 class B2RMVelocityRewardsCfgFinal(MultiRewardCfg):
     rewards: B2RMVelocityRewardsCfg = B2RMVelocityRewardsCfg()
+
+
+@configclass
+class B2RMLegOnlyVelocityRewardsCfg(B2RMVelocityRewardsCfg):
+    """Locomotion rewards with no arm-dependent learning objective."""
+
+    joint_deviation_arm = None
+
+
+@configclass
+class B2RMLegOnlyVelocityRewardsCfgFinal(MultiRewardCfg):
+    rewards: B2RMLegOnlyVelocityRewardsCfg = B2RMLegOnlyVelocityRewardsCfg()
 
 
 @configclass

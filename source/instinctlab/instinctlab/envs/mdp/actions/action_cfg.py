@@ -1,7 +1,7 @@
 from dataclasses import MISSING
 
 from isaaclab.envs.mdp import JointPositionActionCfg
-from isaaclab.managers import ActionTerm, SceneEntityCfg
+from isaaclab.managers import ActionTerm, ActionTermCfg, SceneEntityCfg
 from isaaclab.utils import configclass
 
 from . import joint_actions
@@ -46,3 +46,19 @@ class DynamicTargetJointPositionActionCfg(JointPositionActionCfg):
 
     max_ik_delta: float = 0.12
     """Maximum end-effector position correction per policy step in meters."""
+
+
+@configclass
+class FixedJointPositionActionCfg(ActionTermCfg):
+    """Configuration for a fixed joint target with zero policy dimensions."""
+
+    class_type: type[ActionTerm] = joint_actions.FixedJointPositionAction
+
+    joint_names: list[str] = MISSING
+    """Joint names to hold."""
+
+    joint_pos: dict[str, float] = MISSING
+    """Fixed position target for every selected joint."""
+
+    preserve_order: bool = False
+    """Whether to preserve the configured joint-name order."""

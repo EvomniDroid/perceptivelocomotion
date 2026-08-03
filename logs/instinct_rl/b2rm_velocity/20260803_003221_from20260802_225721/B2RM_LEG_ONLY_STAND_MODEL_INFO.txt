@@ -1,0 +1,8 @@
+Model: B2RM leg-only instantaneous stand handoff
+Task: Instinct-B2RM-LegOnly-Velocity-Handoff-Stand-v0
+Checkpoint: model_6000.pt
+ONNX: exported/actor.onnx
+Policy interface: 50 observation values -> 12 leg actions
+Handoff: Kp=1000/Kd=10 -> Kp=250/Kd=5 with no gain or action blending
+Arm: excluded from policy observations/actions and held at the folded pose by a separate fixed PD action term
+Training result: failed experiment; episode length remained 114 steps and rear-calf contact termination remained 100%

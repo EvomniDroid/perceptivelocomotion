@@ -8,6 +8,7 @@ import omni.log
 
 import isaaclab.utils.string as string_utils
 from isaaclab.envs.mdp import JointPositionAction
+from isaaclab.managers import ActionTerm
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
@@ -94,3 +95,47 @@ class DynamicTargetJointPositionAction(JointPositionAction):
         if dynamic_target is None:
             return
         self._processed_actions[:] = dynamic_target[:, self._joint_ids]
+
+
+class FixedJointPositionAction(ActionTerm):
+    """Hold selected joints at fixed positions without consuming policy actions."""
+
+    cfg: action_cfg.FixedJointPositionActionCfg
+
+    def __init__(self, cfg: action_cfg.FixedJointPositionActionCfg, env: ManagerBasedEnv):
+        super().__init__(cfg, env)
+        self._joint_ids, self._joint_names = self._asset.find_joints(
+            cfg.joint_names, preserve_order=cfg.preserve_order
+        )
+        if len(self._joint_ids) == 0:
+            raise ValueError("FixedJointPositionAction did not resolve any joints.")
+
+        self._raw_actions = torch.zeros(self.num_envs, 0, device=self.device)
+        self._processed_actions = self._asset.data.default_joint_pos[:, self._joint_ids].clone()
+        for joint_name, target in cfg.joint_pos.items():
+            if joint_name not in self._joint_names:
+                raise ValueError(f"Fixed joint target {joint_name!r} was not resolved.")
+            joint_index = self._joint_names.index(joint_name)
+            self._processed_actions[:, joint_index] = float(target)
+
+    @property
+    def action_dim(self) -> int:
+        return 0
+
+    @property
+    def raw_actions(self) -> torch.Tensor:
+        return self._raw_actions
+
+    @property
+    def processed_actions(self) -> torch.Tensor:
+        return self._processed_actions
+
+    def process_actions(self, actions: torch.Tensor):
+        if actions.shape[1] != 0:
+            raise ValueError(f"FixedJointPositionAction expected zero actions, got {actions.shape[1]}.")
+
+    def apply_actions(self):
+        self._asset.set_joint_position_target(self._processed_actions, joint_ids=self._joint_ids)
+
+    def reset(self, env_ids: Sequence[int] | None = None) -> None:
+        pass

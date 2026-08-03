@@ -141,3 +141,63 @@ gym.register(
         ),
     },
 )
+
+
+gym.register(
+    id="Instinct-B2RM-LegOnly-Velocity-Handoff-Walk-v0",
+    entry_point="instinctlab.envs:InstinctRlEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{task_entry}.b2rm_velocity_handoff_cfg:B2RMLegOnlyVelocityHandoffWalkEnvCfg"
+        ),
+        "instinct_rl_cfg_entry_point": (
+            f"{agents.__name__}.instinct_rl_velocity_ppo_cfg:B2RMVelocityPPORunnerCfg"
+        ),
+    },
+)
+
+
+gym.register(
+    id="Instinct-B2RM-LegOnly-Velocity-Handoff-Walk-Play-v0",
+    entry_point="instinctlab.envs:InstinctRlEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{task_entry}.b2rm_velocity_handoff_cfg:B2RMLegOnlyVelocityHandoffWalkEnvCfg_PLAY"
+        ),
+        "instinct_rl_cfg_entry_point": (
+            f"{agents.__name__}.instinct_rl_velocity_ppo_cfg:B2RMVelocityPPORunnerCfg"
+        ),
+    },
+)
+
+
+gym.register(
+    id="Instinct-B2RM-LegOnly-Velocity-Handoff-Stand-v0",
+    entry_point="instinctlab.envs:B2RMHandoffRlEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{task_entry}.b2rm_velocity_handoff_cfg:B2RMLegOnlyVelocityHandoffStandEnvCfg"
+        ),
+        "instinct_rl_cfg_entry_point": (
+            f"{agents.__name__}.instinct_rl_velocity_ppo_cfg:B2RMVelocityPPORunnerCfg"
+        ),
+    },
+)
+
+
+gym.register(
+    id="Instinct-B2RM-LegOnly-Velocity-Handoff-Stand-Play-v0",
+    entry_point="instinctlab.envs:B2RMHandoffRlEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{task_entry}.b2rm_velocity_handoff_cfg:B2RMLegOnlyVelocityHandoffStandEnvCfg_PLAY"
+        ),
+        "instinct_rl_cfg_entry_point": (
+            f"{agents.__name__}.instinct_rl_velocity_ppo_cfg:B2RMVelocityPPORunnerCfg"
+        ),
+    },
+)
