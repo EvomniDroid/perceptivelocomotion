@@ -43,7 +43,7 @@ B2RM_HISTORY_GAIT_PERIOD = 0.7
 
 @configclass
 class B2RMLegOnlyVelocityHistoryPolicyObsCfg(ObsGroup):
-    """Eight-frame leg-only history for generic velocity control."""
+    """Eight-frame deployable history using only real-robot observables."""
 
     joint_pos = ObsTerm(
         func=mdp.joint_pos_rel,
@@ -91,19 +91,6 @@ class B2RMLegOnlyVelocityHistoryPolicyObsCfg(ObsGroup):
         history_length=8,
         flatten_history_dim=True,
     )
-    foot_contacts = ObsTerm(
-        func=mdp.foot_contacts,
-        params={
-            "sensor_cfg": SceneEntityCfg(
-                "contact_forces",
-                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
-                preserve_order=True,
-            ),
-            "force_threshold": 20.0,
-        },
-        history_length=8,
-        flatten_history_dim=True,
-    )
     def __post_init__(self):
         self.enable_corruption = True
         self.concatenate_terms = False
@@ -111,7 +98,7 @@ class B2RMLegOnlyVelocityHistoryPolicyObsCfg(ObsGroup):
 
 @configclass
 class B2RMLegOnlyVelocityHistoryCriticObsCfg(B2RMLegOnlyVelocityHistoryPolicyObsCfg):
-    """Noise-free counterpart of the actor history."""
+    """Noise-free critic with simulation-only privileged state."""
 
     joint_pos = ObsTerm(
         func=mdp.joint_pos_rel,
@@ -128,6 +115,22 @@ class B2RMLegOnlyVelocityHistoryCriticObsCfg(B2RMLegOnlyVelocityHistoryPolicyObs
     base_lin_vel = ObsTerm(func=mdp.base_lin_vel, history_length=8, flatten_history_dim=True)
     base_ang_vel = ObsTerm(func=mdp.base_ang_vel, history_length=8, flatten_history_dim=True)
     projected_gravity = ObsTerm(func=mdp.projected_gravity, history_length=8, flatten_history_dim=True)
+    # Contact remains available to the critic and rewards during training, but
+    # is deliberately excluded from the deployable actor observation. The B2RM
+    # low-state force fields did not provide a separable loaded/unloaded signal.
+    foot_contacts = ObsTerm(
+        func=mdp.foot_contacts,
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
+            ),
+            "force_threshold": 20.0,
+        },
+        history_length=8,
+        flatten_history_dim=True,
+    )
 
     def __post_init__(self):
         self.enable_corruption = False
@@ -286,7 +289,15 @@ class B2RMLegOnlyVelocityHistoryEnvCfg(B2RMVelocityEnvCfg):
         # tracking metrics consumed by the inherited terrain curriculum.
         self.curriculum.terrain_levels = None
         self.actions.leg_joint_pos.scale = 0.4
-        self.actions.leg_joint_pos.clip = {".*": (-1.5, 1.5)}
+        # IsaacLab clips processed joint targets after applying scale/offset.
+        # These limits are exactly target2 + 0.4 * [-1.5, 1.5], matching the
+        # real adapter's raw-action clip instead of clipping every target to
+        # the unrelated absolute range [-1.5, 1.5].
+        self.actions.leg_joint_pos.clip = {
+            ".*_hip_joint": (-0.60, 0.60),
+            ".*_thigh_joint": (0.07, 1.27),
+            ".*_calf_joint": (-1.90, -0.70),
+        }
         self.rewards.rewards.trot_phase_contact.params["period"] = B2RM_HISTORY_GAIT_PERIOD
         self.rewards.rewards.trot_phase_foot_velocity.params["period"] = B2RM_HISTORY_GAIT_PERIOD
         self.commands.base_velocity = mdp.UniformVelocityCommandCfg(
