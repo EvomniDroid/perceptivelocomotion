@@ -42,12 +42,9 @@ class B2RMHandoffRlEnv(InstinctRlEnv):
         )
         self._target2 = self._joint_targets(
             {
-                "FR_hip_joint": -0.1,
-                "FL_hip_joint": 0.1,
-                "RR_hip_joint": -0.1,
-                "RL_hip_joint": 0.1,
-                ".*_thigh_joint": 0.8,
-                ".*_calf_joint": -1.5,
+                ".*_hip_joint": 0.0,
+                ".*_thigh_joint": 0.67,
+                ".*_calf_joint": -1.30,
             }
         )
         self._prone = self._joint_targets(

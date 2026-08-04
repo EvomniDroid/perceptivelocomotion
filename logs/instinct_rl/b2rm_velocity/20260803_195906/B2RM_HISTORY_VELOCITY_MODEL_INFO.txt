@@ -1,0 +1,43 @@
+B2RM 8-frame history velocity policy
+====================================
+
+Training task: Instinct-B2RM-LegOnly-Velocity-History-v0
+Checkpoint: model_5000.pt
+ONNX: exported/actor.onnx
+Network: MoEActorCritic (4 experts), PPO
+Policy frequency: 50 Hz (simulation dt=0.005, decimation=4)
+
+Model contract
+--------------
+Input: 432 float32 values
+  8-frame term-major history of:
+  joint_pos(12), joint_vel(12), base_lin_vel(3), base_ang_vel(3),
+  projected_gravity(3), velocity_commands(3), previous_actions(12),
+  gait_phase(2), foot_contacts(4).
+Output: 12 float32 leg actions in Isaac type-major joint order.
+Action clip: [-1.5, 1.5]
+Action scale: 0.4 rad
+
+Robot/control contract
+----------------------
+Reset/nominal leg pose: hip=0, thigh=0.67, calf=-1.30 rad
+Reset root height: 0.58 m
+Leg PD: Kp=250, Kd=5
+Arm: physically present, independently held folded; not in policy input/output
+Arm PD: Kp=[60,60,50,50,40,40], Kd=[6,6,5,5,4,4]
+Gait period: 0.7 s
+Commands: vx [-0.5,0.5], vy [-0.25,0.25], wz [-0.5,0.5]
+Standing command probability: 12.5%
+
+Sim-to-real randomization
+-------------------------
+Friction/restitution, body mass, base mass/COM, leg actuator gains,
+reset force, periodic pushes, and 0..2 physics-step actuator delay.
+
+Deployment status
+-----------------
+Isaac training/play and ONNX shape have been validated.
+MuJoCo behavior improved after exact term-major history packing, joint-order
+mapping, raw-action history, timing, and PD alignment, but is not yet stable.
+Treat real-robot use as an experimental suspended zero-command test, not as
+a validated free-standing deployment. Keep an operator at emergency stop.
