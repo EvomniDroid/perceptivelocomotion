@@ -5,22 +5,20 @@ import copy
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import EventTermCfg as EventTerm
+from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 
 import instinctlab.envs.mdp as instinct_mdp
 import instinctlab.tasks.parkour.mdp as mdp
+from instinctlab.managers import MultiRewardCfg
 from instinctlab.terrains.shared_terrain_cfg import FLAT_TRAINING_SUB_TERRAINS
 
 from .b2rm_velocity_cfg import (
     B2RMLegOnlyActionsCfg,
-    B2RMLegOnlyVelocityObservationsCfg,
-    B2RMLegOnlyVelocityRewardsCfgFinal,
-    B2RMVelocityCriticObsCfg,
+    B2RMLegOnlyVelocityRewardsCfg,
     B2RMVelocityEnvCfg,
-    B2RMVelocityEnvCfg_PLAY,
-    B2RMVelocityPolicyObsCfg,
 )
 from .b2rm_parkour_cfg import B2RMEventsCfg
 
@@ -43,232 +41,6 @@ B2RM_TARGET2_LEG_POS = {
 B2RM_HISTORY_GAIT_PERIOD = 0.7
 
 
-def _gate_termination(
-    term_cfg,
-    term_name: str,
-    minimum_duration_s: float = 0.0,
-) -> None:
-    wrapped_func = term_cfg.func
-    wrapped_params = dict(term_cfg.params)
-    term_cfg.func = mdp.handoff_gated_termination
-    term_cfg.params = {
-        "wrapped_func": wrapped_func,
-        "wrapped_params": wrapped_params,
-        "counter_name": term_name,
-        "minimum_duration_s": minimum_duration_s,
-    }
-
-
-class B2RMVelocityHandoffCfgMixin:
-    handoff_initial_root_height: float = 0.22
-    handoff_stand_root_height: float = 0.58
-    handoff_start_from_stand: bool = False
-    handoff_target1_seconds: float = 0.8
-    handoff_target2_seconds: float = 0.8
-    handoff_hold_seconds: float = 0.4
-    handoff_gain_blend_seconds: float = 0.0
-    handoff_action_blend_seconds: float = 0.5
-    handoff_termination_grace_seconds: float = 1.0
-    handoff_stand_kp: float = 250.0
-    handoff_stand_kd: float = 5.0
-    handoff_policy_kp: float = 250.0
-    handoff_policy_kd: float = 5.0
-    handoff_policy_action_clip: float = 1.5
-    handoff_debug: bool = False
-
-    def _configure_handoff(self) -> None:
-        # Preserve 20 seconds of policy-controlled time after the scripted startup.
-        scripted_seconds = 0.0
-        if not self.handoff_start_from_stand:
-            scripted_seconds = (
-                self.handoff_target1_seconds
-                + self.handoff_target2_seconds
-                + self.handoff_hold_seconds
-            )
-        self.episode_length_s += scripted_seconds + max(
-            self.handoff_gain_blend_seconds,
-            self.handoff_action_blend_seconds,
-        )
-        self.events.base_external_force_torque = None
-        self.events.push_robot = None
-        # The B2RM model uses merged collision shells that can report transient
-        # base/thigh contacts during an otherwise valid takeover. Rear-calf
-        # contact, however, directly captures the persistent rear-knee kneeling
-        # failure without rejecting a brief scrape while recovering.
-        self.terminations.base_contact = None
-        self.terminations.leg_link_contact = None
-        rear_calf_contact = self.terminations.calf_link_contact
-        rear_calf_contact.params["sensor_cfg"] = SceneEntityCfg(
-            "contact_forces",
-            body_names=["RL_calf", "RR_calf"],
-            preserve_order=True,
-        )
-        _gate_termination(
-            rear_calf_contact,
-            "rear_calf_contact",
-            minimum_duration_s=0.30,
-        )
-        for name in (
-            "time_out",
-            "terrain_out_bound",
-            "root_height",
-            "bad_orientation",
-        ):
-            term_cfg = getattr(self.terminations, name, None)
-            if term_cfg is not None:
-                _gate_termination(term_cfg, name)
-
-
-@configclass
-class B2RMVelocityHandoffPolicyObsCfg(B2RMVelocityPolicyObsCfg):
-    handoff_blend = ObsTerm(func=mdp.handoff_blend_state)
-
-
-@configclass
-class B2RMVelocityHandoffCriticObsCfg(B2RMVelocityCriticObsCfg):
-    handoff_blend = ObsTerm(func=mdp.handoff_blend_state)
-
-
-@configclass
-class B2RMVelocityHandoffObservationsCfg:
-    policy: ObsGroup = B2RMVelocityHandoffPolicyObsCfg()
-    critic: ObsGroup = B2RMVelocityHandoffCriticObsCfg()
-
-
-@configclass
-class B2RMVelocityHandoffEnvCfg(B2RMVelocityHandoffCfgMixin, B2RMVelocityEnvCfg):
-    def __post_init__(self):
-        super().__post_init__()
-        self._configure_handoff()
-
-
-@configclass
-class B2RMVelocityHandoffEnvCfg_PLAY(
-    B2RMVelocityHandoffCfgMixin,
-    B2RMVelocityEnvCfg_PLAY,
-):
-    handoff_debug: bool = True
-
-    def __post_init__(self):
-        super().__post_init__()
-        self._configure_handoff()
-
-
-@configclass
-class B2RMVelocityHandoffStandEnvCfg(B2RMVelocityHandoffEnvCfg):
-    """Stage 1: learn the instantaneous 1000/10 to 250/5 stand takeover."""
-
-    handoff_stand_kp: float = 1000.0
-    handoff_stand_kd: float = 10.0
-    handoff_policy_kp: float = 250.0
-    handoff_policy_kd: float = 5.0
-    handoff_gain_blend_seconds: float = 0.0
-    handoff_action_blend_seconds: float = 0.0
-    handoff_termination_grace_seconds: float = 0.0
-
-    def __post_init__(self):
-        super().__post_init__()
-        # Keep the pretrained velocity policy's action-to-joint mapping exactly
-        # unchanged while fine-tuning the instantaneous gain takeover.
-        self.actions.leg_joint_pos.scale = 0.4
-        self.scene.terrain.terrain_generator.sub_terrains = copy.deepcopy(
-            FLAT_TRAINING_SUB_TERRAINS
-        )
-        contact_balance = self.rewards.rewards.foot_contact_balance
-        contact_balance.func = mdp.feet_contact_deficit
-        contact_balance.weight = -5.0
-        contact_balance.params = {
-            "sensor_cfg": SceneEntityCfg(
-                "contact_forces",
-                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
-                preserve_order=True,
-            ),
-            "force_threshold": 5.0,
-        }
-        command = self.commands.base_velocity
-        command.only_positive_lin_vel_x = False
-        command.ranges = mdp.PoseVelocityCommandCfg.Ranges(
-            lin_vel_x=(0.0, 0.0),
-            lin_vel_y=(0.0, 0.0),
-            ang_vel_z=(0.0, 0.0),
-        )
-        command.velocity_ranges = {}
-        command.random_velocity_terrain = []
-
-
-@configclass
-class B2RMVelocityHandoffStandEnvCfg_PLAY(B2RMVelocityHandoffStandEnvCfg):
-    handoff_debug: bool = True
-
-
-@configclass
-class B2RMVelocityStandEnvCfg(B2RMVelocityHandoffStandEnvCfg):
-    """Pretrain zero-command policy standing directly from the target2 pose."""
-
-    handoff_start_from_stand: bool = True
-    handoff_stand_kp: float = 250.0
-    handoff_stand_kd: float = 5.0
-    handoff_policy_kp: float = 250.0
-    handoff_policy_kd: float = 5.0
-    handoff_action_blend_seconds: float = 0.0
-    # The policy controls and receives reward immediately; only hard fall
-    # termination is delayed briefly to allow initial contact settling.
-    handoff_termination_grace_seconds: float = 0.5
-
-
-@configclass
-class B2RMVelocityStandEnvCfg_PLAY(B2RMVelocityStandEnvCfg):
-    handoff_debug: bool = True
-
-
-@configclass
-class B2RMVelocityHandoffWalkEnvCfg(B2RMVelocityEnvCfg):
-    """Historical velocity baseline with Kp=250 and 0-0.5 m/s commands."""
-
-    def __post_init__(self):
-        super().__post_init__()
-        self.scene.terrain.terrain_generator.sub_terrains = copy.deepcopy(
-            FLAT_TRAINING_SUB_TERRAINS
-        )
-        # Match the action authority used by the previously converged
-        # proprioceptive velocity baseline (commit b8329be).
-        self.actions.leg_joint_pos.scale = 0.4
-        command = self.commands.base_velocity
-        command.only_positive_lin_vel_x = True
-        command.ranges = mdp.PoseVelocityCommandCfg.Ranges(
-            lin_vel_x=(0.0, 0.5),
-            lin_vel_y=(0.0, 0.0),
-            ang_vel_z=(0.0, 0.0),
-        )
-        command.velocity_ranges = {}
-        command.random_velocity_terrain = []
-
-
-@configclass
-class B2RMVelocityHandoffWalkEnvCfg_PLAY(B2RMVelocityHandoffWalkEnvCfg):
-    def __post_init__(self):
-        super().__post_init__()
-        self.scene.num_envs = 1
-        self.commands.base_velocity.debug_vis = True
-
-
-@configclass
-class B2RMLegOnlyVelocityHandoffWalkEnvCfg(B2RMVelocityHandoffWalkEnvCfg):
-    """Deprecated 50-D velocity baseline retained for old checkpoints."""
-
-    observations: B2RMLegOnlyVelocityObservationsCfg = B2RMLegOnlyVelocityObservationsCfg()
-    actions: B2RMLegOnlyActionsCfg = B2RMLegOnlyActionsCfg()
-    rewards: B2RMLegOnlyVelocityRewardsCfgFinal = B2RMLegOnlyVelocityRewardsCfgFinal()
-
-
-@configclass
-class B2RMLegOnlyVelocityHandoffWalkEnvCfg_PLAY(B2RMLegOnlyVelocityHandoffWalkEnvCfg):
-    def __post_init__(self):
-        super().__post_init__()
-        self.scene.num_envs = 1
-        self.commands.base_velocity.debug_vis = True
-
-
 @configclass
 class B2RMLegOnlyVelocityHistoryPolicyObsCfg(ObsGroup):
     """Eight-frame leg-only history for generic velocity control."""
@@ -286,13 +58,6 @@ class B2RMLegOnlyVelocityHistoryPolicyObsCfg(ObsGroup):
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"])},
         noise=Unoise(n_min=-0.01, n_max=0.01),
         clip=(-50, 50),
-        history_length=8,
-        flatten_history_dim=True,
-    )
-    base_lin_vel = ObsTerm(
-        func=mdp.base_lin_vel,
-        noise=Unoise(n_min=-0.01, n_max=0.01),
-        clip=(-10, 10),
         history_length=8,
         flatten_history_dim=True,
     )
@@ -317,8 +82,12 @@ class B2RMLegOnlyVelocityHistoryPolicyObsCfg(ObsGroup):
     )
     actions = ObsTerm(func=instinct_mdp.last_action, history_length=8, flatten_history_dim=True)
     gait_phase = ObsTerm(
-        func=mdp.gait_phase,
-        params={"period": B2RM_HISTORY_GAIT_PERIOD},
+        func=mdp.command_gated_gait_phase,
+        params={
+            "command_name": "base_velocity",
+            "period": B2RM_HISTORY_GAIT_PERIOD,
+            "command_threshold": 0.05,
+        },
         history_length=8,
         flatten_history_dim=True,
     )
@@ -434,12 +203,77 @@ class B2RMLegOnlyVelocityHistoryEventsCfg(B2RMEventsCfg):
 
 
 @configclass
+class B2RMLegOnlyVelocityHistoryRewardTermsCfg(B2RMLegOnlyVelocityRewardsCfg):
+    """Velocity rewards augmented for quiet zero-command deployment."""
+
+    # Prevent the policy from improving its apparent return by deliberately
+    # touching a calf/base and ending a difficult episode early. Timeouts are
+    # truncations, so successful full-length episodes are not penalized.
+    termination_penalty = RewTerm(func=mdp.is_terminated, weight=-200.0)
+    # The inherited 0.5 kernels are too broad for this task's +/-0.2 command
+    # range: a visibly wrong velocity still receives almost full reward.
+    track_lin_vel_xy_exp = RewTerm(
+        func=mdp.track_lin_vel_xy_exp,
+        weight=6.0,
+        params={"command_name": "base_velocity", "std": 0.20},
+    )
+    track_ang_vel_z_exp = RewTerm(
+        func=mdp.track_ang_vel_z_exp,
+        weight=3.0,
+        params={"command_name": "base_velocity", "std": 0.20},
+    )
+    dont_wait = RewTerm(
+        func=mdp.velocity_command_deficit,
+        weight=-2.0,
+        params={
+            "command_name": "base_velocity",
+            "command_threshold": 0.05,
+            "target_ratio": 0.5,
+        },
+    )
+    zero_command_action = RewTerm(
+        func=mdp.zero_command_action_l2,
+        weight=-0.08,
+        params={"command_name": "base_velocity", "command_threshold": 0.05},
+    )
+    zero_command_motion = RewTerm(
+        func=mdp.zero_command_base_motion_l2,
+        weight=-2.0,
+        params={"command_name": "base_velocity", "command_threshold": 0.05},
+    )
+    zero_command_contacts = RewTerm(
+        func=mdp.zero_command_feet_contact_deficit,
+        weight=-3.0,
+        params={
+            "command_name": "base_velocity",
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
+            ),
+            "force_threshold": 5.0,
+            "command_threshold": 0.05,
+        },
+    )
+    action_saturation = RewTerm(
+        func=mdp.action_saturation_l2,
+        weight=-0.15,
+        params={"soft_limit": 1.0},
+    )
+
+
+@configclass
+class B2RMLegOnlyVelocityHistoryRewardsCfg(MultiRewardCfg):
+    rewards: B2RMLegOnlyVelocityHistoryRewardTermsCfg = B2RMLegOnlyVelocityHistoryRewardTermsCfg()
+
+
+@configclass
 class B2RMLegOnlyVelocityHistoryEnvCfg(B2RMVelocityEnvCfg):
-    """Standing-start generic velocity control with eight-frame history."""
+    """Deployable target2-start velocity control with eight-frame history."""
 
     observations: B2RMLegOnlyVelocityHistoryObservationsCfg = B2RMLegOnlyVelocityHistoryObservationsCfg()
     actions: B2RMLegOnlyActionsCfg = B2RMLegOnlyActionsCfg()
-    rewards: B2RMLegOnlyVelocityRewardsCfgFinal = B2RMLegOnlyVelocityRewardsCfgFinal()
+    rewards: B2RMLegOnlyVelocityHistoryRewardsCfg = B2RMLegOnlyVelocityHistoryRewardsCfg()
     events: B2RMLegOnlyVelocityHistoryEventsCfg = B2RMLegOnlyVelocityHistoryEventsCfg()
 
     def __post_init__(self):
@@ -458,13 +292,13 @@ class B2RMLegOnlyVelocityHistoryEnvCfg(B2RMVelocityEnvCfg):
         self.commands.base_velocity = mdp.UniformVelocityCommandCfg(
             asset_name="robot",
             resampling_time_range=(5.0, 10.0),
-            rel_standing_envs=0.125,
+            rel_standing_envs=0.40,
             heading_command=False,
             debug_vis=False,
             ranges=mdp.UniformVelocityCommandCfg.Ranges(
-                lin_vel_x=(-0.5, 0.5),
-                lin_vel_y=(-0.25, 0.25),
-                ang_vel_z=(-0.5, 0.5),
+                lin_vel_x=(-0.20, 0.20),
+                lin_vel_y=(-0.10, 0.10),
+                ang_vel_z=(-0.20, 0.20),
             ),
         )
 
@@ -475,17 +309,3 @@ class B2RMLegOnlyVelocityHistoryEnvCfg_PLAY(B2RMLegOnlyVelocityHistoryEnvCfg):
         super().__post_init__()
         self.scene.num_envs = 1
         self.commands.base_velocity.debug_vis = True
-
-
-@configclass
-class B2RMLegOnlyVelocityHandoffStandEnvCfg(B2RMVelocityHandoffStandEnvCfg):
-    """Instantaneous stand handoff with a 50-D observation and 12-D action."""
-
-    observations: B2RMLegOnlyVelocityObservationsCfg = B2RMLegOnlyVelocityObservationsCfg()
-    actions: B2RMLegOnlyActionsCfg = B2RMLegOnlyActionsCfg()
-    rewards: B2RMLegOnlyVelocityRewardsCfgFinal = B2RMLegOnlyVelocityRewardsCfgFinal()
-
-
-@configclass
-class B2RMLegOnlyVelocityHandoffStandEnvCfg_PLAY(B2RMLegOnlyVelocityHandoffStandEnvCfg):
-    handoff_debug: bool = True

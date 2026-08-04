@@ -24,6 +24,79 @@ def gait_phase(
     return torch.stack((torch.sin(angle), torch.cos(angle)), dim=-1)
 
 
+def command_gated_gait_phase(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    period: float = 0.8,
+    command_threshold: float = 0.05,
+) -> torch.Tensor:
+    """Freeze the gait clock at ``[0, 1]`` while the command is near zero."""
+    phase = gait_phase(env, period)
+    command = env.command_manager.get_command(command_name)
+    moving = torch.logical_or(
+        torch.norm(command[:, :2], dim=-1) >= command_threshold,
+        torch.abs(command[:, 2]) >= command_threshold,
+    )
+    phase[~moving, 0] = 0.0
+    phase[~moving, 1] = 1.0
+    return phase
+
+
+def zero_command_action_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    command_threshold: float = 0.05,
+) -> torch.Tensor:
+    """Penalize policy action magnitude only for near-zero commands."""
+    command = env.command_manager.get_command(command_name)
+    standing = torch.logical_and(
+        torch.norm(command[:, :2], dim=-1) < command_threshold,
+        torch.abs(command[:, 2]) < command_threshold,
+    )
+    return torch.sum(torch.square(env.action_manager.action), dim=-1) * standing.float()
+
+
+def zero_command_base_motion_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    command_threshold: float = 0.05,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize residual body translation and rotation while standing."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)
+    standing = torch.logical_and(
+        torch.norm(command[:, :2], dim=-1) < command_threshold,
+        torch.abs(command[:, 2]) < command_threshold,
+    )
+    motion = torch.sum(torch.square(asset.data.root_lin_vel_b), dim=-1)
+    motion += torch.sum(torch.square(asset.data.root_ang_vel_b), dim=-1)
+    return motion * standing.float()
+
+
+def zero_command_feet_contact_deficit(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    force_threshold: float = 5.0,
+    command_threshold: float = 0.05,
+) -> torch.Tensor:
+    """Require four-foot support only when the requested velocity is zero."""
+    command = env.command_manager.get_command(command_name)
+    standing = torch.logical_and(
+        torch.norm(command[:, :2], dim=-1) < command_threshold,
+        torch.abs(command[:, 2]) < command_threshold,
+    )
+    deficit = feet_contact_deficit(env, sensor_cfg, force_threshold)
+    return deficit * standing.float()
+
+
+def action_saturation_l2(env: ManagerBasedRLEnv, soft_limit: float = 1.0) -> torch.Tensor:
+    """Penalize raw actions that exceed a deployment-friendly soft limit."""
+    excess = torch.clamp(torch.abs(env.action_manager.action) - soft_limit, min=0.0)
+    return torch.sum(torch.square(excess), dim=-1)
+
+
 def _trot_stance_targets(env: ManagerBasedRLEnv, period: float) -> torch.Tensor:
     """Build alternating FL/RR and FR/RL stance targets in FL, FR, RL, RR order."""
     step_buf = getattr(env, "policy_step_buf", env.episode_length_buf)
@@ -286,6 +359,35 @@ def dont_wait(
     lin_vel_x = asset.data.root_lin_vel_b[:, 0]
     # 如果指令 > 0.2，而实际速度过低则惩罚
     return (lin_vel_cmd_x > 0.2) * ((lin_vel_x < 0.2).float() + (lin_vel_x < 0).float() + (lin_vel_x < -0.15).float())
+
+
+def velocity_command_deficit(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    command_threshold: float = 0.05,
+    target_ratio: float = 0.5,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize missing or reversed planar velocity for every nonzero command.
+
+    Each active axis is evaluated in its commanded direction.  For example, a
+    negative ``v_x`` command expects a negative measured ``v_x``; moving
+    forward is penalized just as much as standing still.  The term asks for at
+    least ``target_ratio`` of the requested speed, leaving the exponential
+    tracking reward to optimize the remaining precision.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    command_xy = env.command_manager.get_command(command_name)[:, :2]
+    actual_xy = asset.data.root_lin_vel_b[:, :2]
+
+    active_axes = torch.abs(command_xy) >= command_threshold
+    target_speed = torch.clamp(torch.abs(command_xy) * target_ratio, min=command_threshold)
+    signed_speed = torch.sign(command_xy) * actual_xy
+    axis_deficit = torch.clamp(target_speed - signed_speed, min=0.0) / target_speed
+
+    # Average only commanded axes. A zero command should be handled by the
+    # dedicated zero-command motion reward rather than this locomotion term.
+    return torch.sum(axis_deficit * active_axes, dim=-1) / torch.clamp(active_axes.sum(dim=-1), min=1)
 
 
 def must_turn(
