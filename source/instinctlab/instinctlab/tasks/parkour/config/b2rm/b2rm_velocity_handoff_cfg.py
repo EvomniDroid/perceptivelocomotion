@@ -275,6 +275,42 @@ class B2RMLegOnlyVelocityHistoryRewardTermsCfg(B2RMLegOnlyVelocityRewardsCfg):
         weight=-0.50,
         params={"soft_limit": 0.7},
     )
+    feet_height = RewTerm(
+        func=mdp.swing_foot_clearance_terrain_relative,
+        weight=1.5,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
+            ),
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
+            ),
+            "minimum_height": 0.04,
+            "target_height": 0.08,
+            "std": 0.03,
+            "activation_start": B2RM_GAIT_ACTIVATION_START,
+            "activation_full": B2RM_GAIT_ACTIVATION_FULL,
+        },
+    )
+    diagonal_contact = RewTerm(
+        func=mdp.aperiodic_diagonal_contact_reward,
+        weight=1.0,
+        params={
+            "command_name": "base_velocity",
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
+            ),
+            "activation_start": 0.08,
+            "activation_full": 0.25,
+        },
+    )
 
 
 @configclass
@@ -330,13 +366,9 @@ class B2RMLegOnlyVelocityHistoryEnvCfg(B2RMVelocityEnvCfg):
             vel_threshold=B2RM_GAIT_ACTIVATION_START,
             activation_full=B2RM_GAIT_ACTIVATION_FULL,
         )
-        self.rewards.rewards.feet_height.params.update(
-            target_height=0.08,
-            minimum_target_height=0.03,
-            vel_threshold=B2RM_GAIT_ACTIVATION_START,
-            activation_full=B2RM_GAIT_ACTIVATION_FULL,
-        )
         self.rewards.rewards.action_rate_l2.weight = -0.03
+        self.rewards.rewards.joint_deviation_legs.weight = -0.10
+        self.rewards.rewards.feet_slide.weight = -1.0
         self.rewards.rewards.ang_vel_xy_l2.weight = -0.35
         self.rewards.rewards.flat_orientation_l2.weight = -3.5
         self.rewards.rewards.roll_l2.weight = -2.5

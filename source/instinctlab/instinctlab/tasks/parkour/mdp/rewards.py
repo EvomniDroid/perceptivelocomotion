@@ -639,6 +639,77 @@ def feet_height(
     return reward * activation
 
 
+def swing_foot_clearance_terrain_relative(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    sensor_cfg: SceneEntityCfg,
+    minimum_height: float = 0.04,
+    target_height: float = 0.08,
+    std: float = 0.03,
+    activation_start: float = 0.02,
+    activation_full: float = 0.15,
+) -> torch.Tensor:
+    """Reward only airborne feet for reaching useful terrain-relative clearance.
+
+    The legacy feet-height reward assigned a high Gaussian score to stance
+    feet after replacing their height with zero. That made shuffling all four
+    feet along the ground cheaper than creating a real swing phase.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    swing = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] <= 0.0
+
+    activation = command_gait_activation(
+        env,
+        command_name,
+        activation_start=activation_start,
+        activation_full=activation_full,
+    )
+    desired_height = minimum_height + activation * (target_height - minimum_height)
+    terrain_height = env.scene.env_origins[:, 2].unsqueeze(-1)
+    foot_height = asset.data.body_pos_w[:, asset_cfg.body_ids, 2] - terrain_height
+    height_score = torch.exp(-torch.square(foot_height - desired_height.unsqueeze(-1)) / (std * std))
+
+    swing_count = torch.clamp(torch.sum(swing.float(), dim=-1), min=1.0)
+    score = torch.sum(height_score * swing.float(), dim=-1) / swing_count
+    return score * torch.any(swing, dim=-1).float() * activation
+
+
+def aperiodic_diagonal_contact_reward(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    activation_start: float = 0.08,
+    activation_full: float = 0.25,
+) -> torch.Tensor:
+    """Reward diagonal support without prescribing an external gait clock.
+
+    Feet must be ordered FL, FR, RL, RR. Either diagonal can be in stance, so
+    the policy remains free to choose cadence and phase while pacing/hopping
+    and permanent four-foot contact receive no reward.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact = (contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0.0).float()
+    if contact.shape[1] != 4:
+        raise ValueError(f"aperiodic_diagonal_contact_reward expects four feet, got {contact.shape[1]}.")
+
+    first_diagonal = 0.5 * (contact[:, 0] + contact[:, 3])
+    second_diagonal = 0.5 * (contact[:, 1] + contact[:, 2])
+    first_pair_agreement = 1.0 - torch.abs(contact[:, 0] - contact[:, 3])
+    second_pair_agreement = 1.0 - torch.abs(contact[:, 1] - contact[:, 2])
+    diagonal_opposition = torch.abs(first_diagonal - second_diagonal)
+    pattern_score = 0.5 * (first_pair_agreement + second_pair_agreement) * diagonal_opposition
+
+    activation = command_gait_activation(
+        env,
+        command_name,
+        activation_start=activation_start,
+        activation_full=activation_full,
+    )
+    return pattern_score * activation
+
+
 def feet_height_balance(
     env: ManagerBasedRLEnv,
     command_name: str,
