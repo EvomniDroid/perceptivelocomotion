@@ -1,2 +1,3 @@
-from .commands_cfg import PoseVelocityCommandCfg
+from .commands_cfg import B2RMVelocityCommandCfg, PoseVelocityCommandCfg
 from .pose_velocity_command import PoseVelocityCommand
+from .velocity_command import B2RMVelocityCommand

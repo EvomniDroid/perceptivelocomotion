@@ -217,8 +217,8 @@ class B2RMLegOnlyVelocityHistoryRewardTermsCfg(B2RMLegOnlyVelocityRewardsCfg):
     # range: a visibly wrong velocity still receives almost full reward.
     track_lin_vel_xy_exp = RewTerm(
         func=mdp.track_lin_vel_xy_exp,
-        weight=6.0,
-        params={"command_name": "base_velocity", "std": 0.20},
+        weight=8.0,
+        params={"command_name": "base_velocity", "std": 0.15},
     )
     track_ang_vel_z_exp = RewTerm(
         func=mdp.track_ang_vel_z_exp,
@@ -227,11 +227,11 @@ class B2RMLegOnlyVelocityHistoryRewardTermsCfg(B2RMLegOnlyVelocityRewardsCfg):
     )
     dont_wait = RewTerm(
         func=mdp.velocity_command_deficit,
-        weight=-2.0,
+        weight=-3.0,
         params={
             "command_name": "base_velocity",
             "command_threshold": 0.05,
-            "target_ratio": 0.5,
+            "target_ratio": 0.75,
         },
     )
     zero_command_action = RewTerm(
@@ -260,8 +260,8 @@ class B2RMLegOnlyVelocityHistoryRewardTermsCfg(B2RMLegOnlyVelocityRewardsCfg):
     )
     action_saturation = RewTerm(
         func=mdp.action_saturation_l2,
-        weight=-0.15,
-        params={"soft_limit": 1.0},
+        weight=-0.20,
+        params={"soft_limit": 0.8},
     )
 
 
@@ -288,28 +288,36 @@ class B2RMLegOnlyVelocityHistoryEnvCfg(B2RMVelocityEnvCfg):
         # UniformVelocityCommand does not expose the Parkour target-command
         # tracking metrics consumed by the inherited terrain curriculum.
         self.curriculum.terrain_levels = None
-        self.actions.leg_joint_pos.scale = 0.4
+        self.actions.leg_joint_pos.scale = 0.3
         # IsaacLab clips processed joint targets after applying scale/offset.
-        # These limits are exactly target2 + 0.4 * [-1.5, 1.5], matching the
+        # These limits are exactly target2 + 0.3 * [-1.0, 1.0], matching the
         # real adapter's raw-action clip instead of clipping every target to
         # the unrelated absolute range [-1.5, 1.5].
         self.actions.leg_joint_pos.clip = {
-            ".*_hip_joint": (-0.60, 0.60),
-            ".*_thigh_joint": (0.07, 1.27),
-            ".*_calf_joint": (-1.90, -0.70),
+            ".*_hip_joint": (-0.30, 0.30),
+            ".*_thigh_joint": (0.37, 0.97),
+            ".*_calf_joint": (-1.60, -1.00),
         }
         self.rewards.rewards.trot_phase_contact.params["period"] = B2RM_HISTORY_GAIT_PERIOD
         self.rewards.rewards.trot_phase_foot_velocity.params["period"] = B2RM_HISTORY_GAIT_PERIOD
-        self.commands.base_velocity = mdp.UniformVelocityCommandCfg(
+        self.rewards.rewards.trot_phase_foot_velocity.params.update(
+            min_swing_speed=0.10,
+            max_swing_speed=0.40,
+            command_speed_gain=0.8,
+        )
+        self.rewards.rewards.feet_air_time.params["vel_threshold"] = 0.05
+        self.rewards.rewards.feet_height.params.update(target_height=0.15, vel_threshold=0.05)
+        self.commands.base_velocity = mdp.B2RMVelocityCommandCfg(
             asset_name="robot",
             resampling_time_range=(5.0, 10.0),
-            rel_standing_envs=0.40,
+            rel_standing_envs=0.30,
+            rel_forward_envs=0.70,
             heading_command=False,
             debug_vis=False,
             ranges=mdp.UniformVelocityCommandCfg.Ranges(
-                lin_vel_x=(-0.20, 0.20),
-                lin_vel_y=(-0.10, 0.10),
-                ang_vel_z=(-0.20, 0.20),
+                lin_vel_x=(0.05, 0.50),
+                lin_vel_y=(-0.15, 0.15),
+                ang_vel_z=(-0.30, 0.30),
             ),
         )
 
@@ -320,3 +328,7 @@ class B2RMLegOnlyVelocityHistoryEnvCfg_PLAY(B2RMLegOnlyVelocityHistoryEnvCfg):
         super().__post_init__()
         self.scene.num_envs = 1
         self.commands.base_velocity.debug_vis = True
+        # Keep evaluation deterministic. Training already covers observation,
+        # mass, COM, friction, and actuator-gain randomization.
+        self.observations.policy.enable_corruption = False
+        self.events = None

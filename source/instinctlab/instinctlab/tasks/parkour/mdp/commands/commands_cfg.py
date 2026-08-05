@@ -2,11 +2,23 @@ from dataclasses import MISSING
 
 import isaaclab.sim as sim_utils
 from isaaclab.managers import CommandTermCfg
+from isaaclab.envs.mdp.commands.commands_cfg import UniformVelocityCommandCfg
 from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.markers.config import BLUE_ARROW_X_MARKER_CFG, GREEN_ARROW_X_MARKER_CFG
 from isaaclab.utils import configclass
 
 from .pose_velocity_command import PoseVelocityCommand
+from .velocity_command import B2RMVelocityCommand
+
+
+@configclass
+class B2RMVelocityCommandCfg(UniformVelocityCommandCfg):
+    """Velocity commands with explicit straight-line samples and a resettable gait clock."""
+
+    class_type: type = B2RMVelocityCommand
+
+    rel_forward_envs: float = 0.70
+    """Fraction of moving environments that receive a pure forward command."""
 
 
 @configclass

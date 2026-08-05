@@ -11,6 +11,28 @@ if TYPE_CHECKING:
     from typing import Callable
 
 
+def load_actor_onnx_model(model_path: str) -> Callable:
+    """Load a single actor ONNX that consumes the complete policy observation."""
+    ort_providers = ort.get_available_providers()
+    actor = ort.InferenceSession(model_path, providers=ort_providers)
+    actor_input = actor.get_inputs()[0]
+    actor_input_name = actor_input.name
+
+    def policy(obs: torch.Tensor) -> torch.Tensor:
+        actor_input_value = obs.detach().cpu().numpy().astype(np.float32, copy=False)
+        expected_shape = actor_input.shape
+        if len(expected_shape) == 2 and isinstance(expected_shape[1], int):
+            if actor_input_value.shape[1] != expected_shape[1]:
+                raise ValueError(
+                    f"ONNX actor expects {expected_shape[1]} observations, "
+                    f"got {actor_input_value.shape[1]}."
+                )
+        actor_output = actor.run(None, {actor_input_name: actor_input_value})[0]
+        return torch.from_numpy(actor_output).to(obs.device)
+
+    return policy
+
+
 def load_parkour_onnx_model(
     model_dir: str, get_subobs_func: Callable, depth_shape: tuple, proprio_slice: slice
 ) -> Callable:

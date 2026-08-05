@@ -1,0 +1,79 @@
+B2RM REAL-ROBOT TEST CHECKLIST
+Run: 20260804_233407
+
+1. Model identity (fill before every test)
+checkpoint: logs/instinct_rl/b2rm_velocity/20260804_233407/model_7000.pt
+onnx_path: logs/instinct_rl/b2rm_velocity/20260804_233407/exported/actor.onnx
+checkpoint_sha256: ee8a2b0ce3c9cae0850a4422a74dbd8b2dbcf9ddf6743a4915b483274b4a8f31
+onnx_sha256: da96de9746bcdc2bc6cd39ac198a4a693e92bef0a5543373f38d6c46abafc35e
+instinctlab_git_commit: use the commit containing this checklist and artifacts
+deploy_git_commit:
+test_operator:
+test_time:
+
+2. Policy/deployment contract
+actor_input_shape: [1, 376]
+actor_output_shape: [1, 12]
+policy_rate: 50 Hz
+leg_action: target2 + 0.3 * clip(raw_action, -1.0, 1.0)
+leg_kp: 250
+leg_kd: 5
+arm: independently held; not included in policy observations or actions
+
+Do not run this model if the deployment adapter still expects the old 408-D
+actor input. Verify ONNX dimensions and joint order before enabling motors.
+
+Known validation status:
+- ONNX checker passed and the graph contract is [1,376] -> [1,12].
+- Isaac Play showed unstable/atypical low-speed gait in the initial model_7000
+  review. Treat this as an experimental checkpoint, not a real-robot-approved
+  baseline, until the termination reason and gait asymmetry are resolved.
+
+3. Staged test sequence
+- Hold zero command for 10 seconds.
+- Test vx=0.05 m/s for 5-10 seconds.
+- Test vx=0.10 m/s for 5-10 seconds.
+- Test vx=0.20 m/s for 5-10 seconds.
+- Test vx=0.30 m/s for 5-10 seconds.
+- Test 0.50 m/s only after all lower-speed tests are stable.
+- Keep an emergency stop ready and use physical support for initial tests.
+
+4. Log every 50-Hz policy cycle with one shared timestamp
+- command: cmd_vx, cmd_vy, cmd_wz
+- estimated motion: vx, vy, wz
+- IMU: quaternion, roll, pitch, angular velocity
+- all 12 leg joints: q, dq, q_target
+- all 12 raw policy actions and clipped policy actions
+- all 12 measured or estimated joint torques
+- actual Kp and Kd sent to every motor
+- raw foot-force values and derived contact states
+- policy input min/max, NaN/Inf flags, and history-buffer readiness
+- ONNX inference time, control-loop dt, and deadline overruns
+- controller phase: stand, handoff, policy, emergency stop
+- robot mode, safety/protection state, and error codes
+
+5. Metrics to calculate after each test
+- mean and maximum abs(cmd_vx - vx)
+- mean and maximum abs(cmd_vy - vy)
+- zero-command planar drift and backward-drift bias
+- roll/pitch RMS and maximum absolute angle
+- per-joint maximum abs(q_target - q)
+- per-joint torque peak and sustained high-torque duration
+- raw-action and target-limit clipping ratio
+- four-foot contact duty factor and diagonal/left-right asymmetry
+- control-loop dt mean/max and deadline-overrun count
+- number, time, and reason of every safety stop
+
+6. Evidence required for diagnosis
+- Save the complete raw log, not only terminal summaries.
+- Save a synchronized video of the whole robot.
+- Mark the exact video/log time when an anomaly begins, for example:
+  "12.4 s: starts drifting backward" or "8.1 s: rear legs soften".
+- If available, record an independent velocity reference such as motion
+  capture, visual odometry, or measured travel distance. This distinguishes
+  policy failure from biased onboard velocity estimation.
+
+7. Training reference targets
+Velocity/vx_error: below 0.05 m/s is good; 0.03-0.04 m/s is excellent.
+Velocity/vy_error: below 0.03 m/s.
+Velocity/zero_command_drift: below 0.02-0.04 m/s.

@@ -626,6 +626,13 @@ def main():
     if args_cli.keyboard_control:
         env_cfg.scene.num_envs = 1
         env_cfg.episode_length_s = 1e10
+        if hasattr(env_cfg, "commands") and hasattr(env_cfg.commands, "base_velocity"):
+            # Keyboard commands must remain authoritative. Otherwise the
+            # command term periodically resamples a random command behind the
+            # displayed override and advances a contradictory gait clock.
+            env_cfg.commands.base_velocity.resampling_time_range = (1e10, 1e10)
+            if hasattr(env_cfg.commands.base_velocity, "rel_standing_envs"):
+                env_cfg.commands.base_velocity.rel_standing_envs = 0.0
 
     if args_cli.free_view and hasattr(env_cfg, "viewer"):
         env_cfg.viewer.origin_type = "world"
@@ -918,44 +925,60 @@ def main():
 
     # use the exported model for inference
     if args_cli.useonnx:
-        from onnxer import load_parkour_onnx_model
+        from onnxer import load_actor_onnx_model, load_parkour_onnx_model
 
-        # NOTE: This is only applicable with parkour task
         obs_segments = env.get_obs_segments()
-        proprio_components = [
-            component
-            for component in [
-                "base_lin_vel",
-                "base_ang_vel",
-                "projected_gravity",
-                "velocity_commands",
-                "joint_pos",
-                "joint_vel",
-                "actions",
+        exported_dir = os.path.join(log_dir, "exported")
+        if "depth_image" in obs_segments:
+            proprio_components = [
+                component
+                for component in [
+                    "base_lin_vel",
+                    "base_ang_vel",
+                    "projected_gravity",
+                    "velocity_commands",
+                    "joint_pos",
+                    "joint_vel",
+                    "actions",
+                ]
+                if component in obs_segments
             ]
-            if component in obs_segments
-        ]
-        onnx_policy = load_parkour_onnx_model(
-            model_dir=os.path.join(log_dir, "exported"),
-            get_subobs_func=lambda obs: get_subobs_by_components(
-                obs,
-                agent_cfg.policy.encoder_configs.depth_encoder.component_names,
-                obs_segments,
-                temporal=True,
-            ),
-            depth_shape=obs_segments["depth_image"],
-            proprio_slice=slice(
-                0,
-                get_subobs_size(
+            onnx_policy = load_parkour_onnx_model(
+                model_dir=exported_dir,
+                get_subobs_func=lambda obs: get_subobs_by_components(
+                    obs,
+                    agent_cfg.policy.encoder_configs.depth_encoder.component_names,
                     obs_segments,
-                    proprio_components,
+                    temporal=True,
                 ),
-            ),
-        )
+                depth_shape=obs_segments["depth_image"],
+                proprio_slice=slice(0, get_subobs_size(obs_segments, proprio_components)),
+            )
+            print("[INFO]: Loaded depth-encoder Parkour ONNX policy.")
+        else:
+            onnx_policy = load_actor_onnx_model(os.path.join(exported_dir, "actor.onnx"))
+            print("[INFO]: Loaded proprioceptive actor ONNX policy.")
 
     override_command = torch.zeros(env.num_envs, 3, device=env.device)
     command_obs_slice = get_obs_slice(env.get_obs_segments(), "velocity_commands")
     keyboard_command_enabled = args_cli.keyboard_control or walk_policy is not None
+    velocity_command_term = None
+    if keyboard_command_enabled:
+        velocity_command_term = env.unwrapped.command_manager.get_term("base_velocity")
+
+    def sync_velocity_command_term() -> None:
+        """Keep command observations and gait phase on the same command source."""
+        if velocity_command_term is None or not hasattr(velocity_command_term, "vel_command_b"):
+            return
+        velocity_command_term.vel_command_b.copy_(override_command)
+        if hasattr(velocity_command_term, "is_standing_env"):
+            velocity_command_term.is_standing_env[:] = False
+        if hasattr(velocity_command_term, "gait_time"):
+            moving = torch.logical_or(
+                torch.norm(override_command[:, :2], dim=-1) >= 0.05,
+                torch.abs(override_command[:, 2]) >= 0.05,
+            )
+            velocity_command_term.gait_time[~moving] = 0.0
 
     def set_velocity_command(observation: torch.Tensor, command: torch.Tensor) -> None:
         repeats = command_obs_slice[1][0] // 3
@@ -1011,6 +1034,7 @@ def main():
             f"[键盘] {cmd_display_names.get(name, name):>4s} | "
             f"cmd=(v_x={vx:+.2f}, v_y={vy:+.2f}, ω_z={wz:+.2f})"
         )
+        sync_velocity_command_term()
 
     def on_keyboard_input(e):
         global _print_vel_help
@@ -1039,6 +1063,10 @@ def main():
     # 获取obs切片信息，用于打印实际速度
     obs_segments = env.get_obs_segments()
     vel_slice = get_obs_slice(obs_segments, "base_lin_vel") if "base_lin_vel" in obs_segments else None
+
+    # Start keyboard play from a true zero command in both the observation and
+    # the command manager (including its command-gated gait clock).
+    sync_velocity_command_term()
 
     # reset environment
     obs, _ = env.get_observations()
@@ -1069,19 +1097,34 @@ def main():
         )
 
     def summarize_termination(env_id, infos):
-        episode_info = infos.get("episode", {})
         active_reasons = []
-        for key, value in episode_info.items():
-            if "Episode_Termination" not in key:
-                continue
-            try:
-                reason_value = float(value[env_id].item())
-            except Exception:
-                continue
-            if reason_value > 0.5:
-                active_reasons.append(f"{key}={reason_value:.3f}")
+        termination_manager = getattr(env.unwrapped, "termination_manager", None)
+        if termination_manager is not None:
+            for name in termination_manager.active_terms:
+                try:
+                    if bool(termination_manager.get_term(name)[env_id].item()):
+                        active_reasons.append(name)
+                except (IndexError, KeyError, RuntimeError):
+                    pass
+
+        # Keep compatibility with wrappers that expose episodic values only.
+        for info_group in (infos.get("episode", {}), infos.get("log", {})):
+            for key, value in info_group.items():
+                if "Episode_Termination" not in key:
+                    continue
+                try:
+                    reason_value = float(value[env_id].item())
+                except (AttributeError, IndexError, TypeError, ValueError):
+                    try:
+                        reason_value = float(value)
+                    except (TypeError, ValueError):
+                        continue
+                if reason_value > 0.5:
+                    reason = key.rsplit("/", 1)[-1]
+                    if reason not in active_reasons:
+                        active_reasons.append(reason)
         if active_reasons:
-            return ", ".join(active_reasons)
+            return "+".join(active_reasons)
 
         time_outs = infos.get("time_outs", None)
         if time_outs is not None:
@@ -1096,6 +1139,8 @@ def main():
     while simulation_app.is_running():
         # run everything in inference mode
         with torch.inference_mode():
+            if keyboard_command_enabled:
+                sync_velocity_command_term()
             # agent stepping
             if walk_policy is not None:
                 unwrapped = env.unwrapped
@@ -1167,9 +1212,19 @@ def main():
 
             # 打印实际速度 vs 命令速度（命令变化时或每200步）
             cmd_changed = not torch.allclose(override_command[0], last_debug_cmd, atol=1e-4)
-            if keyboard_command_enabled and vel_slice is not None and (cmd_changed or timestep % 200 == 0):
-                vel_start = vel_slice[0].start if isinstance(vel_slice[0], slice) else vel_slice[0]
-                actual_vel = obs[0, vel_start:vel_start+3].cpu()
+            if keyboard_command_enabled and (cmd_changed or timestep % 200 == 0):
+                if vel_slice is not None:
+                    vel_start = vel_slice[0].start if isinstance(vel_slice[0], slice) else vel_slice[0]
+                    actual_vel = obs[0, vel_start:vel_start+3].cpu()
+                else:
+                    robot_data = env.unwrapped.scene["robot"].data
+                    actual_vel = torch.stack(
+                        (
+                            robot_data.root_lin_vel_b[0, 0],
+                            robot_data.root_lin_vel_b[0, 1],
+                            robot_data.root_ang_vel_b[0, 2],
+                        )
+                    ).cpu()
                 cmd = override_command[0].cpu()
                 print(f"[实时] cmd=({cmd[0]:+.2f}, {cmd[1]:+.2f}, {cmd[2]:+.2f})  "
                       f"实际=({actual_vel[0]:+.2f}, {actual_vel[1]:+.2f}, {actual_vel[2]:+.2f})")

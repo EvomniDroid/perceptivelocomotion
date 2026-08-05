@@ -31,7 +31,13 @@ def command_gated_gait_phase(
     command_threshold: float = 0.05,
 ) -> torch.Tensor:
     """Freeze the gait clock at ``[0, 1]`` while the command is near zero."""
-    phase = gait_phase(env, period)
+    command_term = env.command_manager.get_term(command_name)
+    if hasattr(command_term, "gait_time"):
+        phase_value = torch.remainder(command_term.gait_time, period) / period
+        angle = 2.0 * math.pi * phase_value
+        phase = torch.stack((torch.sin(angle), torch.cos(angle)), dim=-1)
+    else:
+        phase = gait_phase(env, period)
     command = env.command_manager.get_command(command_name)
     moving = torch.logical_or(
         torch.norm(command[:, :2], dim=-1) >= command_threshold,
@@ -97,10 +103,18 @@ def action_saturation_l2(env: ManagerBasedRLEnv, soft_limit: float = 1.0) -> tor
     return torch.sum(torch.square(excess), dim=-1)
 
 
-def _trot_stance_targets(env: ManagerBasedRLEnv, period: float) -> torch.Tensor:
+def _trot_stance_targets(
+    env: ManagerBasedRLEnv,
+    period: float,
+    command_name: str | None = None,
+) -> torch.Tensor:
     """Build alternating FL/RR and FR/RL stance targets in FL, FR, RL, RR order."""
-    step_buf = getattr(env, "policy_step_buf", env.episode_length_buf)
-    phase = torch.remainder(step_buf.float() * env.step_dt, period) / period
+    command_term = env.command_manager.get_term(command_name) if command_name is not None else None
+    if command_term is not None and hasattr(command_term, "gait_time"):
+        phase = torch.remainder(command_term.gait_time, period) / period
+    else:
+        step_buf = getattr(env, "policy_step_buf", env.episode_length_buf)
+        phase = torch.remainder(step_buf.float() * env.step_dt, period) / period
     first_diagonal = (phase < 0.5).float()
     second_diagonal = 1.0 - first_diagonal
     return torch.stack(
@@ -122,7 +136,7 @@ def trot_phase_contact_reward(
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
     contact_forces = contact_sensor.data.net_forces_w_history[:, -1, sensor_cfg.body_ids]
     contact = torch.clamp(torch.norm(contact_forces, dim=-1) / force_scale, 0.0, 1.0)
-    desired_stance = _trot_stance_targets(env, period)
+    desired_stance = _trot_stance_targets(env, period, command_name)
     contact_error = torch.mean(torch.square(contact - desired_stance), dim=-1)
 
     command = env.command_manager.get_command(command_name)
@@ -138,22 +152,31 @@ def trot_phase_foot_velocity_penalty(
     command_name: str,
     asset_cfg: SceneEntityCfg,
     period: float = 0.8,
-    min_swing_speed: float = 0.35,
+    min_swing_speed: float = 0.10,
+    max_swing_speed: float = 0.40,
+    command_speed_gain: float = 0.8,
     command_threshold: float = 0.05,
 ) -> torch.Tensor:
     """Penalize moving stance feet and swing feet that remain nearly stationary."""
     asset: Articulation = env.scene[asset_cfg.name]
     foot_speed = torch.norm(asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :], dim=-1)
-    desired_stance = _trot_stance_targets(env, period)
+    desired_stance = _trot_stance_targets(env, period, command_name)
     desired_swing = 1.0 - desired_stance
+
+    command = env.command_manager.get_command(command_name)
+    command_speed = torch.norm(command[:, :2], dim=-1) + 0.25 * torch.abs(command[:, 2])
+    target_swing_speed = torch.clamp(
+        command_speed_gain * command_speed,
+        min=min_swing_speed,
+        max=max_swing_speed,
+    ).unsqueeze(-1)
 
     stance_error = desired_stance * torch.square(foot_speed)
     swing_error = desired_swing * torch.square(
-        torch.clamp(min_swing_speed - foot_speed, min=0.0)
+        torch.clamp(target_swing_speed - foot_speed, min=0.0)
     )
     error = torch.mean(stance_error + swing_error, dim=-1)
 
-    command = env.command_manager.get_command(command_name)
     has_command = torch.logical_or(
         torch.norm(command[:, :2], dim=-1) >= command_threshold,
         torch.abs(command[:, 2]) >= command_threshold,
