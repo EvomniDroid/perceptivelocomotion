@@ -13,30 +13,40 @@ if TYPE_CHECKING:
 
 
 class B2RMVelocityCommand(UniformVelocityCommand):
-    """Uniform velocity command with straight-line oversampling and command-local gait time."""
+    """Uniform velocity command with optional speed and straight-line oversampling."""
 
     cfg: B2RMVelocityCommandCfg
 
     def __init__(self, cfg: B2RMVelocityCommandCfg, env: ManagerBasedEnv):
         super().__init__(cfg, env)
-        self.gait_time = torch.zeros(self.num_envs, device=self.device)
+        self._last_curriculum_update_step = 0
 
     def _resample_command(self, env_ids: Sequence[int]):
         super()._resample_command(env_ids)
-        self.gait_time[env_ids] = 0.0
 
         moving_ids = torch.as_tensor(env_ids, device=self.device, dtype=torch.long)
         if moving_ids.numel() == 0:
             return
+        active_ids = moving_ids[~self.is_standing_env[moving_ids]]
+        if active_ids.numel() > 0 and self.cfg.low_speed_fraction + self.cfg.mid_speed_fraction > 0.0:
+            if self.cfg.low_speed_fraction + self.cfg.mid_speed_fraction > 1.0:
+                raise ValueError("low_speed_fraction + mid_speed_fraction must not exceed 1.0.")
+            bucket = torch.rand(active_ids.numel(), device=self.device)
+            low = bucket < self.cfg.low_speed_fraction
+            mid = torch.logical_and(
+                bucket >= self.cfg.low_speed_fraction,
+                bucket < self.cfg.low_speed_fraction + self.cfg.mid_speed_fraction,
+            )
+            high = ~(low | mid)
+            for mask, speed_range in (
+                (low, self.cfg.low_speed_range),
+                (mid, self.cfg.mid_speed_range),
+                (high, self.cfg.high_speed_range),
+            ):
+                ids = active_ids[mask]
+                if ids.numel() > 0:
+                    self.vel_command_b[ids, 0] = torch.empty(ids.numel(), device=self.device).uniform_(*speed_range)
+
         forward = torch.rand(moving_ids.numel(), device=self.device) < self.cfg.rel_forward_envs
         forward_ids = moving_ids[forward & ~self.is_standing_env[moving_ids]]
         self.vel_command_b[forward_ids, 1:] = 0.0
-
-    def _update_command(self):
-        super()._update_command()
-        moving = torch.logical_or(
-            torch.norm(self.vel_command_b[:, :2], dim=-1) >= 0.05,
-            torch.abs(self.vel_command_b[:, 2]) >= 0.05,
-        )
-        self.gait_time[moving] += self._env.step_dt
-        self.gait_time[~moving] = 0.0

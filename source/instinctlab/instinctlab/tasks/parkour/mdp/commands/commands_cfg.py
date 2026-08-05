@@ -13,12 +13,25 @@ from .velocity_command import B2RMVelocityCommand
 
 @configclass
 class B2RMVelocityCommandCfg(UniformVelocityCommandCfg):
-    """Velocity commands with explicit straight-line samples and a resettable gait clock."""
+    """Velocity commands with optional sampling bias and curriculum limits."""
 
     class_type: type = B2RMVelocityCommand
 
     rel_forward_envs: float = 0.70
     """Fraction of moving environments that receive a pure forward command."""
+
+    low_speed_fraction: float = 0.0
+    """Fraction of moving environments sampled from ``low_speed_range``."""
+
+    mid_speed_fraction: float = 0.0
+    """Fraction of moving environments sampled from ``mid_speed_range``."""
+
+    low_speed_range: tuple[float, float] = (0.03, 0.15)
+    mid_speed_range: tuple[float, float] = (0.15, 0.30)
+    high_speed_range: tuple[float, float] = (0.30, 0.50)
+
+    limit_ranges: UniformVelocityCommandCfg.Ranges = MISSING
+    """Maximum ranges reachable by the command curriculum."""
 
 
 @configclass

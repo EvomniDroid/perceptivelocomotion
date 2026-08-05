@@ -1,0 +1,70 @@
+B2RM LEG-ONLY VELOCITY HISTORY MODEL
+====================================
+
+Run: 20260805_172624
+Checkpoint: model_2500.pt
+Task: Instinct-B2RM-LegOnly-Velocity-History-v0
+Play task: Instinct-B2RM-LegOnly-Velocity-History-Play-v0
+
+Policy interface
+----------------
+Actor input: 360 float32 values (8 frames x 45 values)
+Per-frame order:
+  joint_pos[12], joint_vel[12], base_ang_vel[3], projected_gravity[3],
+  velocity_command[vx, vy, wz], previous_raw_action[12]
+Actor output: 12 raw leg joint-position residual actions
+Joint order: FL/FR/RL/RR hip, FL/FR/RL/RR thigh, FL/FR/RL/RR calf
+Action scale: 0.3 rad around the target2/default joint pose
+Action bounds: [-1, 1]
+Action low-pass: filtered = 0.8 * raw + 0.2 * previous_filtered
+The actor has no foot-contact, base-linear-velocity, gait-phase, or arm output.
+
+Control and limits
+------------------
+Policy/control period: 0.02 s (50 Hz)
+Physics period: 0.005 s
+Leg PD: Kp=250, Kd=5
+Leg actuator delay randomization: 0-2 physics steps
+Effort limits: hip=200 Nm, thigh=200 Nm, calf=320 Nm
+Velocity limits: hip=23 rad/s, thigh=23 rad/s, calf=14 rad/s
+Arm: fixed folded target maintained outside the 12-D policy action
+
+Training setup
+--------------
+Initial command ranges: vx=[-0.1, 0.1], vy=[-0.1, 0.1], wz=[-0.2, 0.2]
+Curriculum limits: vx=[-1.0, 1.0], vy=[-0.4, 0.4], wz=[-0.8, 0.8]
+Standing environments: 10 percent
+Command curriculum increment: 0.1 after 80 percent tracking success
+No fixed gait clock or gait-phase observation/reward
+Friction randomization: static=[0.6, 1.2], dynamic=[0.5, 1.1]
+Body mass scale: [0.95, 1.05]
+Additional base mass: [-3, 3] kg
+Actuator gain scale: stiffness=[0.9, 1.1], damping=[0.8, 1.2]
+Periodic velocity push: each 10-15 s, components in [-0.5, 0.5]
+
+Checkpoint-2500 training snapshot
+---------------------------------
+Mean episode length, last 100 iterations: 983.7 / 1000
+Timeout termination, last 100: 97.47 percent
+Calf contact termination, last 100: 1.85 percent
+Leg/base contact termination, last 100: 0.09 percent
+Bad-orientation termination, last 100: 0.009 percent
+Mean vx error, last 100: 0.0514 m/s
+Mean vy error, last 100: 0.0444 m/s
+Zero-command drift, last 100: 0.0312 m/s
+Curriculum level near checkpoint: approximately 0.6 m/s vx range
+
+Artifact verification
+---------------------
+model_2500.pt SHA256:
+  0b3ddfc7a90939303f70be95001bd37f20d03673867389712b0575c2ff02763c
+exported/actor.onnx SHA256:
+  ed1d6b3f72daad33eb244f1db714b785009820603924a487d5e22693bedeeabc
+ONNX interface checked with ONNX Runtime: input [1, 360], output [1, 12].
+Zero and random test inputs produced finite outputs.
+
+Real-robot note
+---------------
+Use the 360-D eight-frame deployment adapter with the exact term order above.
+Do not use the older 376-D gait-phase adapter. Begin takeover at zero command,
+retain joint/torque/action safety limits, and validate at 0.05-0.10 m/s first.

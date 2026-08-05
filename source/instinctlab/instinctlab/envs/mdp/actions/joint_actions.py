@@ -97,6 +97,30 @@ class DynamicTargetJointPositionAction(JointPositionAction):
         self._processed_actions[:] = dynamic_target[:, self._joint_ids]
 
 
+class FilteredJointPositionAction(JointPositionAction):
+    """Apply a first-order filter while preserving the policy's raw action."""
+
+    cfg: action_cfg.FilteredJointPositionActionCfg
+
+    def __init__(self, cfg: action_cfg.FilteredJointPositionActionCfg, env: ManagerBasedEnv):
+        super().__init__(cfg, env)
+        if not 0.0 < cfg.filter_alpha <= 1.0:
+            raise ValueError(f"filter_alpha must be in (0, 1], got {cfg.filter_alpha}.")
+        self._filtered_actions = torch.zeros_like(self._raw_actions)
+
+    def process_actions(self, actions: torch.Tensor):
+        alpha = float(self.cfg.filter_alpha)
+        self._filtered_actions.mul_(1.0 - alpha).add_(actions, alpha=alpha)
+        super().process_actions(self._filtered_actions)
+        # Action history and saturation rewards must retain the network output,
+        # while processed_actions contains the command that reaches the PD loop.
+        self._raw_actions[:] = actions
+
+    def reset(self, env_ids: Sequence[int] | None = None) -> None:
+        super().reset(env_ids)
+        self._filtered_actions[env_ids] = 0.0
+
+
 class FixedJointPositionAction(ActionTerm):
     """Hold selected joints at fixed positions without consuming policy actions."""
 

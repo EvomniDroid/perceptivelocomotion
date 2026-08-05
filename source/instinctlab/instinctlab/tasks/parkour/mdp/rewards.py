@@ -24,13 +24,29 @@ def gait_phase(
     return torch.stack((torch.sin(angle), torch.cos(angle)), dim=-1)
 
 
+def command_gait_activation(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    activation_start: float = 0.02,
+    activation_full: float = 0.15,
+    yaw_weight: float = 0.25,
+) -> torch.Tensor:
+    """Return a smooth stand-to-gait activation in ``[0, 1]``."""
+    command = env.command_manager.get_command(command_name)
+    command_speed = torch.norm(command[:, :2], dim=-1) + yaw_weight * torch.abs(command[:, 2])
+    width = max(activation_full - activation_start, 1.0e-6)
+    activation = torch.clamp((command_speed - activation_start) / width, 0.0, 1.0)
+    return activation * activation * (3.0 - 2.0 * activation)
+
+
 def command_gated_gait_phase(
     env: ManagerBasedRLEnv,
     command_name: str,
     period: float = 0.8,
-    command_threshold: float = 0.05,
+    activation_start: float = 0.02,
+    activation_full: float = 0.15,
 ) -> torch.Tensor:
-    """Freeze the gait clock at ``[0, 1]`` while the command is near zero."""
+    """Continuously blend the gait clock out of the standing value ``[0, 1]``."""
     command_term = env.command_manager.get_term(command_name)
     if hasattr(command_term, "gait_time"):
         phase_value = torch.remainder(command_term.gait_time, period) / period
@@ -38,14 +54,15 @@ def command_gated_gait_phase(
         phase = torch.stack((torch.sin(angle), torch.cos(angle)), dim=-1)
     else:
         phase = gait_phase(env, period)
-    command = env.command_manager.get_command(command_name)
-    moving = torch.logical_or(
-        torch.norm(command[:, :2], dim=-1) >= command_threshold,
-        torch.abs(command[:, 2]) >= command_threshold,
-    )
-    phase[~moving, 0] = 0.0
-    phase[~moving, 1] = 1.0
-    return phase
+    activation = command_gait_activation(
+        env,
+        command_name,
+        activation_start=activation_start,
+        activation_full=activation_full,
+    ).unsqueeze(-1)
+    standing_phase = torch.zeros_like(phase)
+    standing_phase[:, 1] = 1.0
+    return standing_phase + activation * (phase - standing_phase)
 
 
 def zero_command_action_l2(
@@ -130,21 +147,27 @@ def trot_phase_contact_reward(
     period: float = 0.8,
     force_scale: float = 120.0,
     sigma: float = 0.25,
-    command_threshold: float = 0.05,
+    activation_start: float = 0.02,
+    activation_full: float = 0.15,
+    command_threshold: float | None = None,
 ) -> torch.Tensor:
     """Reward force contacts that alternate between the two trot diagonals."""
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
     contact_forces = contact_sensor.data.net_forces_w_history[:, -1, sensor_cfg.body_ids]
     contact = torch.clamp(torch.norm(contact_forces, dim=-1) / force_scale, 0.0, 1.0)
-    desired_stance = _trot_stance_targets(env, period, command_name)
-    contact_error = torch.mean(torch.square(contact - desired_stance), dim=-1)
-
-    command = env.command_manager.get_command(command_name)
-    has_command = torch.logical_or(
-        torch.norm(command[:, :2], dim=-1) >= command_threshold,
-        torch.abs(command[:, 2]) >= command_threshold,
+    if command_threshold is not None:
+        activation_start = command_threshold
+        activation_full = command_threshold + 1.0e-6
+    trot_stance = _trot_stance_targets(env, period, command_name)
+    activation = command_gait_activation(
+        env,
+        command_name,
+        activation_start=activation_start,
+        activation_full=activation_full,
     )
-    return torch.exp(-contact_error / sigma) * has_command.float()
+    desired_stance = 1.0 - activation.unsqueeze(-1) * (1.0 - trot_stance)
+    contact_error = torch.mean(torch.square(contact - desired_stance), dim=-1)
+    return torch.exp(-contact_error / sigma) * activation
 
 
 def trot_phase_foot_velocity_penalty(
@@ -155,21 +178,34 @@ def trot_phase_foot_velocity_penalty(
     min_swing_speed: float = 0.10,
     max_swing_speed: float = 0.40,
     command_speed_gain: float = 0.8,
-    command_threshold: float = 0.05,
+    activation_start: float = 0.02,
+    activation_full: float = 0.15,
+    command_threshold: float | None = None,
 ) -> torch.Tensor:
     """Penalize moving stance feet and swing feet that remain nearly stationary."""
+    if command_threshold is not None:
+        activation_start = command_threshold
+        activation_full = command_threshold + 1.0e-6
     asset: Articulation = env.scene[asset_cfg.name]
     foot_speed = torch.norm(asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :], dim=-1)
-    desired_stance = _trot_stance_targets(env, period, command_name)
+    trot_stance = _trot_stance_targets(env, period, command_name)
+    activation = command_gait_activation(
+        env,
+        command_name,
+        activation_start=activation_start,
+        activation_full=activation_full,
+    )
+    desired_stance = 1.0 - activation.unsqueeze(-1) * (1.0 - trot_stance)
     desired_swing = 1.0 - desired_stance
 
     command = env.command_manager.get_command(command_name)
     command_speed = torch.norm(command[:, :2], dim=-1) + 0.25 * torch.abs(command[:, 2])
-    target_swing_speed = torch.clamp(
+    target_swing_speed = activation * torch.clamp(
         command_speed_gain * command_speed,
         min=min_swing_speed,
         max=max_swing_speed,
-    ).unsqueeze(-1)
+    )
+    target_swing_speed = target_swing_speed.unsqueeze(-1)
 
     stance_error = desired_stance * torch.square(foot_speed)
     swing_error = desired_swing * torch.square(
@@ -177,14 +213,16 @@ def trot_phase_foot_velocity_penalty(
     )
     error = torch.mean(stance_error + swing_error, dim=-1)
 
-    has_command = torch.logical_or(
-        torch.norm(command[:, :2], dim=-1) >= command_threshold,
-        torch.abs(command[:, 2]) >= command_threshold,
-    )
-    return error * has_command.float()
+    return error
 
 
-def feet_air_time(env, command_name: str, vel_threshold: float, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+def feet_air_time(
+    env,
+    command_name: str,
+    vel_threshold: float,
+    sensor_cfg: SceneEntityCfg,
+    activation_full: float | None = None,
+) -> torch.Tensor:
     """奖励双足机器人脚部腾空时间，鼓励迈大步。
     
     如果在指令很小（即机器人不应该迈步）的情况下，奖励为零。
@@ -208,10 +246,18 @@ def feet_air_time(env, command_name: str, vel_threshold: float, sensor_cfg: Scen
     reward = reward - 0.3 * asymmetry
     # ===== 结束 =====
     # 针对零指令的情况不给奖励
-    reward *= torch.logical_or(
-        torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > vel_threshold,
-        torch.abs(env.command_manager.get_command(command_name)[:, 2]) > vel_threshold,
-    )
+    if activation_full is None:
+        reward *= torch.logical_or(
+            torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > vel_threshold,
+            torch.abs(env.command_manager.get_command(command_name)[:, 2]) > vel_threshold,
+        )
+    else:
+        reward *= command_gait_activation(
+            env,
+            command_name,
+            activation_start=vel_threshold,
+            activation_full=activation_full,
+        )
     return reward
 
 
@@ -550,7 +596,9 @@ def feet_height(
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
     target_height: float = 0.3,
+    minimum_target_height: float | None = None,
     vel_threshold: float = 0.15,
+    activation_full: float | None = None,
 ) -> torch.Tensor:
     """奖励摆动脚抬到目标高度。
 
@@ -568,17 +616,27 @@ def feet_height(
     base_z = asset.data.root_pos_w[:, 2].unsqueeze(1)
     foot_height_rel = foot_z - (base_z - 0.4)  # 0.4 ≈ 地面到基座的粗略偏移
 
-    # 摆动相不触地的脚，高度接近 target 就给奖励
-    swing_height = torch.where(in_contact, torch.zeros_like(foot_height_rel), foot_height_rel)
-    reward = torch.exp(-torch.square(swing_height - target_height) / 0.04)  # sigma≈0.2
-    reward = torch.mean(reward, dim=1)
+    if activation_full is None:
+        activation = torch.logical_or(
+            torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > vel_threshold,
+            torch.abs(env.command_manager.get_command(command_name)[:, 2]) > vel_threshold,
+        ).float()
+        target = torch.full_like(activation, target_height)
+    else:
+        activation = command_gait_activation(
+            env,
+            command_name,
+            activation_start=vel_threshold,
+            activation_full=activation_full,
+        )
+        minimum = target_height if minimum_target_height is None else minimum_target_height
+        target = minimum + activation * (target_height - minimum)
 
-    # 零指令时不奖励
-    has_cmd = torch.logical_or(
-        torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > vel_threshold,
-        torch.abs(env.command_manager.get_command(command_name)[:, 2]) > vel_threshold,
-    )
-    return reward * has_cmd.float()
+    # 摆动相不触地的脚，高度接近速度相关目标就给奖励。
+    swing_height = torch.where(in_contact, torch.zeros_like(foot_height_rel), foot_height_rel)
+    reward = torch.exp(-torch.square(swing_height - target.unsqueeze(-1)) / 0.04)  # sigma≈0.2
+    reward = torch.mean(reward, dim=1)
+    return reward * activation
 
 
 def feet_height_balance(

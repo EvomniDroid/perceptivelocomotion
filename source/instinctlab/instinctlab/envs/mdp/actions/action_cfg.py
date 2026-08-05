@@ -49,6 +49,16 @@ class DynamicTargetJointPositionActionCfg(JointPositionActionCfg):
 
 
 @configclass
+class FilteredJointPositionActionCfg(JointPositionActionCfg):
+    """Joint-position action with a deployment-friendly first-order filter."""
+
+    class_type: type[ActionTerm] = joint_actions.FilteredJointPositionAction
+
+    filter_alpha: float = 0.8
+    """Current-action weight. The remaining weight uses the previous filtered action."""
+
+
+@configclass
 class FixedJointPositionActionCfg(ActionTermCfg):
     """Configuration for a fixed joint target with zero policy dimensions."""
 

@@ -4,6 +4,7 @@ import copy
 
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
+from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
@@ -14,6 +15,7 @@ import instinctlab.envs.mdp as instinct_mdp
 import instinctlab.tasks.parkour.mdp as mdp
 from instinctlab.managers import MultiRewardCfg
 from instinctlab.terrains.shared_terrain_cfg import FLAT_TRAINING_SUB_TERRAINS
+from instinctlab.tasks.parkour.config.parkour_env_cfg import CurriculumCfg
 
 from .b2rm_velocity_cfg import (
     B2RMLegOnlyActionsCfg,
@@ -38,7 +40,21 @@ B2RM_TARGET2_LEG_POS = {
     "RR_calf_joint": -1.30,
 }
 
-B2RM_HISTORY_GAIT_PERIOD = 0.7
+B2RM_GAIT_ACTIVATION_START = 0.02
+B2RM_GAIT_ACTIVATION_FULL = 0.15
+
+
+@configclass
+class B2RMFilteredLegOnlyActionsCfg(B2RMLegOnlyActionsCfg):
+    """Leg-only action path with the same low-pass filter used at deployment."""
+
+    leg_joint_pos = instinct_mdp.FilteredJointPositionActionCfg(
+        asset_name="robot",
+        joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
+        scale=0.3,
+        use_default_offset=True,
+        filter_alpha=0.8,
+    )
 
 
 @configclass
@@ -81,16 +97,6 @@ class B2RMLegOnlyVelocityHistoryPolicyObsCfg(ObsGroup):
         flatten_history_dim=True,
     )
     actions = ObsTerm(func=instinct_mdp.last_action, history_length=8, flatten_history_dim=True)
-    gait_phase = ObsTerm(
-        func=mdp.command_gated_gait_phase,
-        params={
-            "command_name": "base_velocity",
-            "period": B2RM_HISTORY_GAIT_PERIOD,
-            "command_threshold": 0.05,
-        },
-        history_length=8,
-        flatten_history_dim=True,
-    )
     def __post_init__(self):
         self.enable_corruption = True
         self.concatenate_terms = False
@@ -209,6 +215,12 @@ class B2RMLegOnlyVelocityHistoryEventsCfg(B2RMEventsCfg):
 class B2RMLegOnlyVelocityHistoryRewardTermsCfg(B2RMLegOnlyVelocityRewardsCfg):
     """Velocity rewards augmented for quiet zero-command deployment."""
 
+    # Let the policy discover its own gait from state history. These inherited
+    # terms encode a fixed diagonal-trot clock and would reintroduce phase
+    # supervision even though phase is no longer part of the observation.
+    trot_phase_contact = None
+    trot_phase_foot_velocity = None
+
     # Prevent the policy from improving its apparent return by deliberately
     # touching a calf/base and ending a difficult episode early. Timeouts are
     # truncations, so successful full-length episodes are not penalized.
@@ -237,12 +249,12 @@ class B2RMLegOnlyVelocityHistoryRewardTermsCfg(B2RMLegOnlyVelocityRewardsCfg):
     zero_command_action = RewTerm(
         func=mdp.zero_command_action_l2,
         weight=-0.08,
-        params={"command_name": "base_velocity", "command_threshold": 0.05},
+        params={"command_name": "base_velocity", "command_threshold": B2RM_GAIT_ACTIVATION_START},
     )
     zero_command_motion = RewTerm(
         func=mdp.zero_command_base_motion_l2,
         weight=-2.0,
-        params={"command_name": "base_velocity", "command_threshold": 0.05},
+        params={"command_name": "base_velocity", "command_threshold": B2RM_GAIT_ACTIVATION_START},
     )
     zero_command_contacts = RewTerm(
         func=mdp.zero_command_feet_contact_deficit,
@@ -255,13 +267,13 @@ class B2RMLegOnlyVelocityHistoryRewardTermsCfg(B2RMLegOnlyVelocityRewardsCfg):
                 preserve_order=True,
             ),
             "force_threshold": 5.0,
-            "command_threshold": 0.05,
+            "command_threshold": B2RM_GAIT_ACTIVATION_START,
         },
     )
     action_saturation = RewTerm(
         func=mdp.action_saturation_l2,
-        weight=-0.20,
-        params={"soft_limit": 0.8},
+        weight=-0.50,
+        params={"soft_limit": 0.7},
     )
 
 
@@ -271,13 +283,32 @@ class B2RMLegOnlyVelocityHistoryRewardsCfg(MultiRewardCfg):
 
 
 @configclass
+class B2RMVelocityHistoryCurriculumCfg(CurriculumCfg):
+    """Flat-ground command curriculum for the deployable velocity policy."""
+
+    terrain_levels = None
+    velocity_command_levels = CurrTerm(
+        func=mdp.velocity_command_levels,
+        params={
+            "reward_term_name": "track_lin_vel_xy_exp",
+            "reward_group_name": "rewards",
+            "success_ratio": 0.8,
+            "lin_x_step": 0.1,
+            "lin_y_step": 0.1,
+            "yaw_step": 0.1,
+        },
+    )
+
+
+@configclass
 class B2RMLegOnlyVelocityHistoryEnvCfg(B2RMVelocityEnvCfg):
     """Deployable target2-start velocity control with eight-frame history."""
 
     observations: B2RMLegOnlyVelocityHistoryObservationsCfg = B2RMLegOnlyVelocityHistoryObservationsCfg()
-    actions: B2RMLegOnlyActionsCfg = B2RMLegOnlyActionsCfg()
+    actions: B2RMFilteredLegOnlyActionsCfg = B2RMFilteredLegOnlyActionsCfg()
     rewards: B2RMLegOnlyVelocityHistoryRewardsCfg = B2RMLegOnlyVelocityHistoryRewardsCfg()
     events: B2RMLegOnlyVelocityHistoryEventsCfg = B2RMLegOnlyVelocityHistoryEventsCfg()
+    curriculum: B2RMVelocityHistoryCurriculumCfg = B2RMVelocityHistoryCurriculumCfg()
 
     def __post_init__(self):
         super().__post_init__()
@@ -285,9 +316,6 @@ class B2RMLegOnlyVelocityHistoryEnvCfg(B2RMVelocityEnvCfg):
         self.scene.robot.init_state.pos = (0.0, 0.0, 0.58)
         self.scene.robot.init_state.joint_pos.update(B2RM_TARGET2_LEG_POS)
         self.scene.terrain.terrain_generator.sub_terrains = copy.deepcopy(FLAT_TRAINING_SUB_TERRAINS)
-        # UniformVelocityCommand does not expose the Parkour target-command
-        # tracking metrics consumed by the inherited terrain curriculum.
-        self.curriculum.terrain_levels = None
         self.actions.leg_joint_pos.scale = 0.3
         # IsaacLab clips processed joint targets after applying scale/offset.
         # These limits are exactly target2 + 0.3 * [-1.0, 1.0], matching the
@@ -298,26 +326,36 @@ class B2RMLegOnlyVelocityHistoryEnvCfg(B2RMVelocityEnvCfg):
             ".*_thigh_joint": (0.37, 0.97),
             ".*_calf_joint": (-1.60, -1.00),
         }
-        self.rewards.rewards.trot_phase_contact.params["period"] = B2RM_HISTORY_GAIT_PERIOD
-        self.rewards.rewards.trot_phase_foot_velocity.params["period"] = B2RM_HISTORY_GAIT_PERIOD
-        self.rewards.rewards.trot_phase_foot_velocity.params.update(
-            min_swing_speed=0.10,
-            max_swing_speed=0.40,
-            command_speed_gain=0.8,
+        self.rewards.rewards.feet_air_time.params.update(
+            vel_threshold=B2RM_GAIT_ACTIVATION_START,
+            activation_full=B2RM_GAIT_ACTIVATION_FULL,
         )
-        self.rewards.rewards.feet_air_time.params["vel_threshold"] = 0.05
-        self.rewards.rewards.feet_height.params.update(target_height=0.15, vel_threshold=0.05)
+        self.rewards.rewards.feet_height.params.update(
+            target_height=0.08,
+            minimum_target_height=0.03,
+            vel_threshold=B2RM_GAIT_ACTIVATION_START,
+            activation_full=B2RM_GAIT_ACTIVATION_FULL,
+        )
+        self.rewards.rewards.action_rate_l2.weight = -0.03
+        self.rewards.rewards.ang_vel_xy_l2.weight = -0.35
+        self.rewards.rewards.flat_orientation_l2.weight = -3.5
+        self.rewards.rewards.roll_l2.weight = -2.5
         self.commands.base_velocity = mdp.B2RMVelocityCommandCfg(
             asset_name="robot",
             resampling_time_range=(5.0, 10.0),
-            rel_standing_envs=0.30,
-            rel_forward_envs=0.70,
+            rel_standing_envs=0.10,
+            rel_forward_envs=0.0,
             heading_command=False,
             debug_vis=False,
             ranges=mdp.UniformVelocityCommandCfg.Ranges(
-                lin_vel_x=(0.05, 0.50),
-                lin_vel_y=(-0.15, 0.15),
-                ang_vel_z=(-0.30, 0.30),
+                lin_vel_x=(-0.10, 0.10),
+                lin_vel_y=(-0.10, 0.10),
+                ang_vel_z=(-0.20, 0.20),
+            ),
+            limit_ranges=mdp.UniformVelocityCommandCfg.Ranges(
+                lin_vel_x=(-1.00, 1.00),
+                lin_vel_y=(-0.40, 0.40),
+                ang_vel_z=(-0.80, 0.80),
             ),
         )
 
