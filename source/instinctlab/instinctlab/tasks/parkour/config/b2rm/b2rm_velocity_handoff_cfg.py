@@ -366,7 +366,30 @@ class B2RMLegOnlyVelocityHistoryEnvCfg_PLAY(B2RMLegOnlyVelocityHistoryEnvCfg):
         super().__post_init__()
         self.scene.num_envs = 1
         self.commands.base_velocity.debug_vis = True
-        # Keep evaluation deterministic. Training already covers observation,
-        # mass, COM, friction, and actuator-gain randomization.
+        # Keep evaluation deterministic while preserving reset events. Removing
+        # the entire event config also removes terrain-relative base/joint
+        # resets, causing every post-contact reset to respawn inside the ground.
         self.observations.policy.enable_corruption = False
-        self.events = None
+        self.events.physics_material = None
+        self.events.scale_body_mass = None
+        self.events.add_base_mass = None
+        self.events.base_com = None
+        self.events.actuator_gains = None
+        self.events.push_robot = None
+        self.events.base_external_force_torque = None
+        self.events.reset_base.params = {
+            "pose_range": {
+                "x": (0.0, 0.0),
+                "y": (0.0, 0.0),
+                "yaw": (0.0, 0.0),
+            },
+            "velocity_range": {
+                "x": (0.0, 0.0),
+                "y": (0.0, 0.0),
+                "z": (0.0, 0.0),
+                "roll": (0.0, 0.0),
+                "pitch": (0.0, 0.0),
+                "yaw": (0.0, 0.0),
+            },
+        }
+        self.events.reset_leg_joints.params["position_range"] = (0.0, 0.0)
