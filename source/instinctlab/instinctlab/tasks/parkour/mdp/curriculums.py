@@ -51,3 +51,87 @@ def tracking_exp_vel(
     terrain.update_env_origins(env_ids, move_up, move_down)
     # return the mean terrain level
     return torch.mean(terrain.terrain_levels.float())
+
+
+def velocity_command_levels(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    reward_term_name: str = "track_lin_vel_xy_exp",
+    reward_group_name: str = "rewards",
+    success_ratio: float = 0.8,
+    lin_x_step: float = 0.1,
+    lin_y_step: float = 0.1,
+    yaw_step: float = 0.1,
+) -> torch.Tensor:
+    """Expand command ranges after the policy masters the current range."""
+    command = env.command_manager.get_term("base_velocity")
+    ranges = command.cfg.ranges
+    limits = command.cfg.limit_ranges
+
+    # CurriculumManager can call this for many reset subsets in one step. Only
+    # assess it once per nominal episode so the global command range cannot
+    # jump several levels from the same batch of returns.
+    if env.common_step_counter - command._last_curriculum_update_step < env.max_episode_length:
+        return torch.tensor(ranges.lin_vel_x[1], device=env.device)
+    command._last_curriculum_update_step = env.common_step_counter
+
+    reward_cfg = env.reward_manager.get_term_cfg(reward_term_name, group_name=reward_group_name)
+    reward_key = f"{reward_group_name}_{reward_term_name}"
+    normalized_reward = torch.mean(env.reward_manager._episode_sums[reward_key][env_ids]) / env.max_episode_length_s
+    if normalized_reward > reward_cfg.weight * success_ratio:
+        ranges.lin_vel_x = _expand_symmetric_range(ranges.lin_vel_x, limits.lin_vel_x, lin_x_step)
+        ranges.lin_vel_y = _expand_symmetric_range(ranges.lin_vel_y, limits.lin_vel_y, lin_y_step)
+        ranges.ang_vel_z = _expand_symmetric_range(ranges.ang_vel_z, limits.ang_vel_z, yaw_step)
+
+    return torch.tensor(ranges.lin_vel_x[1], device=env.device)
+
+
+def forward_trot_then_turn_command_levels(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    reward_term_name: str = "track_lin_vel_xy_exp",
+    reward_group_name: str = "rewards",
+    success_ratio: float = 0.8,
+    lin_x_step: float = 0.1,
+    turn_start_vx: float = 0.3,
+    yaw_step: float = 0.1,
+) -> torch.Tensor:
+    """Learn forward trot first, then add yaw commands after 0.3 m/s.
+
+    Lateral and reverse commands deliberately remain disabled here. They are a
+    later curriculum stage, after a symmetric forward gait is reliable.
+    """
+    command = env.command_manager.get_term("base_velocity")
+    ranges = command.cfg.ranges
+    limits = command.cfg.limit_ranges
+
+    if env.common_step_counter - command._last_curriculum_update_step < env.max_episode_length:
+        return torch.tensor(ranges.lin_vel_x[1], device=env.device)
+    command._last_curriculum_update_step = env.common_step_counter
+
+    reward_cfg = env.reward_manager.get_term_cfg(reward_term_name, group_name=reward_group_name)
+    reward_key = f"{reward_group_name}_{reward_term_name}"
+    normalized_reward = torch.mean(env.reward_manager._episode_sums[reward_key][env_ids]) / env.max_episode_length_s
+    if normalized_reward > reward_cfg.weight * success_ratio:
+        forward_trot_mastered = float(ranges.lin_vel_x[1]) >= turn_start_vx
+        ranges.lin_vel_x = _expand_symmetric_range(ranges.lin_vel_x, limits.lin_vel_x, lin_x_step)
+        # Once the policy reaches the requested forward-speed threshold, add
+        # small turns progressively instead of introducing mixed commands at reset.
+        if forward_trot_mastered:
+            # ``rel_forward_envs`` explicitly zeros vy/wz in the command
+            # generator. Release that straight-line override only in stage 2.
+            command.cfg.rel_forward_envs = 0.0
+            ranges.ang_vel_z = _expand_symmetric_range(ranges.ang_vel_z, limits.ang_vel_z, yaw_step)
+
+    return torch.tensor(ranges.lin_vel_x[1], device=env.device)
+
+
+def _expand_symmetric_range(
+    current: tuple[float, float] | list[float],
+    limit: tuple[float, float] | list[float],
+    step: float,
+) -> tuple[float, float]:
+    return (
+        max(float(limit[0]), float(current[0]) - step),
+        min(float(limit[1]), float(current[1]) + step),
+    )

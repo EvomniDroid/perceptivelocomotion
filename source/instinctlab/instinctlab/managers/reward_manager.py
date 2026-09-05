@@ -102,18 +102,27 @@ class MultiRewardManager(RewardManager):
         # 解析环境ID (如果没有指定，则视为所有环境都需要重置)
         if env_ids is None:
             env_ids = range(self.num_envs)
+
+        core_reward_aliases = {
+            "rewards_tracking_contacts_shaped_force": "tracking_contacts_shaped_force",
+        }
         
         # 存储日志信息 (extras字典最后会被送去跑 Tensorboard 画图)
         extras = {}
         for key in self._episode_sums.keys():
             # 计算该奖励项在需要重置的环境中的平均总得分
             episodic_sum_avg = torch.mean(self._episode_sums[key][env_ids])
+            timestep_avg = torch.mean(self._episode_sums[key][env_ids] / self._env.episode_length_buf[env_ids])
             # 根据时间步或最大步骤数归一化得分写入 extras
             extras["Episode_Reward/" + key + "/max_episode_len_s"] = episodic_sum_avg / self._env.max_episode_length_s
             extras["Episode_Reward/" + key + "/sum"] = episodic_sum_avg
-            extras["Episode_Reward/" + key + "/timestep"] = torch.mean(
-                self._episode_sums[key][env_ids] / self._env.episode_length_buf[env_ids]
-            )
+            extras["Episode_Reward/" + key + "/timestep"] = timestep_avg
+
+            alias_name = core_reward_aliases.get(key)
+            if alias_name is not None:
+                extras["00-core/" + alias_name + "/max_episode_len_s"] = episodic_sum_avg / self._env.max_episode_length_s
+                extras["00-core/" + alias_name + "/sum"] = episodic_sum_avg
+                extras["00-core/" + alias_name + "/timestep"] = timestep_avg
             # 重置环境中的该项奖励的累计分数为 0
             self._episode_sums[key][env_ids] = 0.0
             

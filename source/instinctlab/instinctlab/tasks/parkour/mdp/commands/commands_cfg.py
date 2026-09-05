@@ -2,11 +2,36 @@ from dataclasses import MISSING
 
 import isaaclab.sim as sim_utils
 from isaaclab.managers import CommandTermCfg
+from isaaclab.envs.mdp.commands.commands_cfg import UniformVelocityCommandCfg
 from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.markers.config import BLUE_ARROW_X_MARKER_CFG, GREEN_ARROW_X_MARKER_CFG
 from isaaclab.utils import configclass
 
 from .pose_velocity_command import PoseVelocityCommand
+from .velocity_command import B2RMVelocityCommand
+
+
+@configclass
+class B2RMVelocityCommandCfg(UniformVelocityCommandCfg):
+    """Velocity commands with optional sampling bias and curriculum limits."""
+
+    class_type: type = B2RMVelocityCommand
+
+    rel_forward_envs: float = 0.70
+    """Fraction of moving environments that receive a pure forward command."""
+
+    low_speed_fraction: float = 0.0
+    """Fraction of moving environments sampled from ``low_speed_range``."""
+
+    mid_speed_fraction: float = 0.0
+    """Fraction of moving environments sampled from ``mid_speed_range``."""
+
+    low_speed_range: tuple[float, float] = (0.03, 0.15)
+    mid_speed_range: tuple[float, float] = (0.15, 0.30)
+    high_speed_range: tuple[float, float] = (0.30, 0.50)
+
+    limit_ranges: UniformVelocityCommandCfg.Ranges = MISSING
+    """Maximum ranges reachable by the command curriculum."""
 
 
 @configclass
@@ -45,6 +70,9 @@ class PoseVelocityCommandCfg(CommandTermCfg):
 
     random_velocity_terrain: list[str] = None
     """List of terrain types for which the velocity commands should be randomized."""
+
+    random_ang_vel_threshold: float = 0.5
+    """Random angular velocity commands below this magnitude are zeroed. Set to 0.0 to keep small turns."""
 
     velocity_ranges: dict = None
     """Dictionary containing velocity ranges for different terrains. If not None, the velocity ranges will be set based on the terrain type."""

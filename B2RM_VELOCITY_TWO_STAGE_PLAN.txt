@@ -1,0 +1,99 @@
+B2RM velocity real-deploy training
+===================================
+
+Shared policy interface
+-----------------------
+- All stages use the historical 72-D observation and 18-D action layout.
+- Policy leg PD: Kp=250, Kd=5.
+- Leg action scale: 0.4; raw policy action clip: [-1.5, 1.5].
+- Arm action scale: 0.0; the arm stays in the folded carry pose.
+- Policy control: 50 Hz; simulation physics: 200 Hz.
+- Training terrain: the low-amplitude flat-training terrain set.
+- Startup push and reset force disturbances are disabled.
+
+Stage 0: policy stand pretraining
+---------------------------------
+Task:
+  Instinct-B2RM-Velocity-Stand-v0
+
+Flow on every reset:
+  target2 standing pose at 0.50 m
+  -> Kp=250, Kd=5 from the first simulation step
+  -> policy controls immediately with a zero velocity command
+  -> rewards are active immediately
+  -> hard fall termination gets 0.5 s of initial settling grace
+
+Train from scratch before training the handoff:
+
+  cd ~/isaac/instinctlab
+  python scripts/instinct_rl/train.py \
+    --task=Instinct-B2RM-Velocity-Stand-v0 \
+    --headless \
+    --num_envs=2048 \
+    --max_iterations=5000
+
+Stage 1: instantaneous stand takeover
+-------------------------------------
+Task:
+  Instinct-B2RM-Velocity-Handoff-Stand-v0
+
+Flow on every reset:
+  prone
+  -> 0.8 s target1 interpolation at Kp=1000, Kd=10
+  -> 0.8 s target2 interpolation at Kp=1000, Kd=10
+  -> 0.4 s target2 hold at Kp=1000, Kd=10
+  -> instantaneous gain switch to Kp=250, Kd=5
+  -> policy takes full control on the same frame (no action blend)
+  -> rear calf contact above 50 N for 0.30 s resets the episode
+  -> zero-command policy stand
+
+Warm-start from the accepted Stage-0 checkpoint:
+
+  cd ~/isaac/instinctlab
+  python scripts/instinct_rl/train.py \
+    --task=Instinct-B2RM-Velocity-Handoff-Stand-v0 \
+    --headless \
+    --num_envs=2048 \
+    --max_iterations=10000 \
+    --resume \
+    --load_run=/absolute/path/to/stage0_run \
+    --checkpoint=model_5000.pt
+
+Acceptance check:
+- Remains upright for at least 30 seconds after takeover.
+- No isolated leg kick during the 1000 -> 250 gain switch.
+- Raw actions do not continuously hit [-1.5, 1.5].
+- Base velocity remains close to zero.
+
+Stage 2: forward walking
+------------------------
+Task:
+  Instinct-B2RM-Velocity-Handoff-Walk-v0
+
+Flow on every reset:
+  historical converged velocity-baseline reset and PPO flow
+  -> target2 standing pose at 0.50 m, Kp=250, Kd=5
+  -> leg action scale 0.4 (same as commit b8329be)
+  -> forward command sampled uniformly from 0.0 to 0.5 m/s
+  -> no handoff action blend, termination grace, or gated calf reset
+
+Train this baseline from scratch first. Its accepted checkpoint can later
+warm-start the stand-handoff fine-tuning task because their policy observation
+and action layouts are identical:
+
+  cd ~/isaac/instinctlab
+  python scripts/instinct_rl/train.py \
+    --task=Instinct-B2RM-Velocity-Handoff-Walk-v0 \
+    --headless \
+    --num_envs=2048 \
+    --max_iterations=5000
+
+Do not add yaw, lateral velocity, rough terrain, pushes, payload
+randomization, or PD randomization until this flat forward policy passes
+Isaac Play and real-robot low-speed validation.
+
+Play tasks
+----------
+- Instinct-B2RM-Velocity-Stand-Play-v0
+- Instinct-B2RM-Velocity-Handoff-Stand-Play-v0
+- Instinct-B2RM-Velocity-Handoff-Walk-Play-v0

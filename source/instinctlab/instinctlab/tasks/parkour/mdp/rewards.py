@@ -1,17 +1,338 @@
 from __future__ import annotations
 
+import math
 import torch
 from typing import TYPE_CHECKING
 
-from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import SceneEntityCfg, ManagerTermBase, RewardTermCfg
 from isaaclab.sensors import ContactSensor
-from isaaclab.utils.math import quat_apply_inverse
+from isaaclab.utils.math import euler_xyz_from_quat, quat_apply_inverse, quat_from_euler_xyz, quat_mul, normalize
 
 if TYPE_CHECKING:
+    from isaaclab.assets import Articulation, RigidObject
     from isaaclab.envs import ManagerBasedRLEnv
 
 
-def feet_air_time(env, command_name: str, vel_threshold: float, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+def gait_phase(
+    env: ManagerBasedRLEnv,
+    period: float = 0.8,
+) -> torch.Tensor:
+    """Return a policy-observable periodic clock as ``[sin, cos]``."""
+    step_buf = getattr(env, "policy_step_buf", env.episode_length_buf)
+    phase = torch.remainder(step_buf.float() * env.step_dt, period) / period
+    angle = 2.0 * math.pi * phase
+    return torch.stack((torch.sin(angle), torch.cos(angle)), dim=-1)
+
+
+def basic_loco_trot_clock(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    period: float = 1.0 / 1.4,
+    phase_offsets: tuple[float, float, float, float] = (0.0, 0.5, 0.5, 0.0),
+    command_threshold: float = 0.02,
+) -> torch.Tensor:
+    """Return BasicLoco's four-leg phase clock in FL, FR, RL, RR order.
+
+    This clock is generated from control time, not a contact sensor, so the
+    exact same signal is available on the real robot. At a zero command it is
+    set to ``-1`` as in BasicLoco, marking a standing state rather than a gait
+    phase.
+    """
+    step_buf = getattr(env, "policy_step_buf", env.episode_length_buf)
+    global_phase = torch.remainder(step_buf.float() * env.step_dt / period, 1.0)
+    offsets = torch.tensor(phase_offsets, device=env.device, dtype=global_phase.dtype)
+    clock = torch.remainder(global_phase.unsqueeze(-1) + offsets, 1.0)
+
+    command = env.command_manager.get_command(command_name)
+    moving = torch.logical_or(
+        torch.norm(command[:, :2], dim=-1) > command_threshold,
+        torch.abs(command[:, 2]) > command_threshold,
+    )
+    return torch.where(moving.unsqueeze(-1), clock, torch.full_like(clock, -1.0))
+
+
+def _basic_loco_trot_stance(
+    env: ManagerBasedRLEnv,
+    period: float,
+    duty_factor: float,
+    phase_offsets: tuple[float, float, float, float],
+) -> torch.Tensor:
+    """Build BasicLoco's desired stance mask in FL, FR, RL, RR order."""
+    return _basic_loco_trot_leg_phase(env, period, phase_offsets) < duty_factor
+
+
+def _basic_loco_trot_leg_phase(
+    env: ManagerBasedRLEnv,
+    period: float,
+    phase_offsets: tuple[float, float, float, float],
+) -> torch.Tensor:
+    """Return the continuous BasicLoco phase of each leg."""
+    step_buf = getattr(env, "policy_step_buf", env.episode_length_buf)
+    global_phase = torch.remainder(step_buf.float() * env.step_dt / period, 1.0)
+    offsets = torch.tensor(phase_offsets, device=env.device, dtype=global_phase.dtype)
+    return torch.remainder(global_phase.unsqueeze(-1) + offsets, 1.0)
+
+
+def basic_loco_periodic_contact_suggestion(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    period: float = 1.0 / 1.4,
+    duty_factor: float = 0.65,
+    phase_offsets: tuple[float, float, float, float] = (0.0, 0.5, 0.5, 0.0),
+    contact_force_threshold: float = 5.0,
+    command_threshold: float = 0.02,
+) -> torch.Tensor:
+    """Reward the BasicLoco FL/RR, FR/RL periodic support schedule."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w_history[:, :, sensor_cfg.body_ids]
+    contact = torch.linalg.vector_norm(forces, dim=-1).amax(dim=1) > contact_force_threshold
+    desired_stance = _basic_loco_trot_stance(env, period, duty_factor, phase_offsets)
+    matches_schedule = (contact == desired_stance).float().mean(dim=-1)
+
+    command = env.command_manager.get_command(command_name)
+    moving = torch.logical_or(
+        torch.norm(command[:, :2], dim=-1) > command_threshold,
+        torch.abs(command[:, 2]) > command_threshold,
+    )
+    return matches_schedule * moving.float()
+
+
+def basic_loco_periodic_swing_clearance(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    period: float = 1.0 / 1.4,
+    duty_factor: float = 0.65,
+    phase_offsets: tuple[float, float, float, float] = (0.0, 0.5, 0.5, 0.0),
+    target_height: float = 0.08,
+    tolerance: float = 0.02,
+    command_threshold: float = 0.02,
+) -> torch.Tensor:
+    """Reward clearance only for the scheduled diagonal swing legs."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    leg_phase = _basic_loco_trot_leg_phase(env, period, phase_offsets)
+    desired_stance = leg_phase < duty_factor
+    desired_swing = ~desired_stance
+    terrain_height = env.scene.env_origins[:, 2].unsqueeze(-1)
+    foot_height = asset.data.body_pos_w[:, asset_cfg.body_ids, 2] - terrain_height
+
+    # A real swing starts and ends at ground height; only its midpoint should
+    # reach the configured peak. A constant peak target throughout swing
+    # rewards hopping and makes early gait exploration unnecessarily sparse.
+    swing_phase = torch.clamp((leg_phase - duty_factor) / max(1.0 - duty_factor, 1.0e-6), 0.0, 1.0)
+    desired_height = target_height * torch.sin(torch.pi * swing_phase)
+    height_error = foot_height - desired_height
+    score = torch.exp(-torch.square(height_error) / (tolerance * tolerance))
+    score = torch.sum(score * desired_swing.float(), dim=-1) / desired_swing.float().sum(dim=-1).clamp(min=1.0)
+
+    command = env.command_manager.get_command(command_name)
+    moving = torch.logical_or(
+        torch.norm(command[:, :2], dim=-1) > command_threshold,
+        torch.abs(command[:, 2]) > command_threshold,
+    )
+    return score * moving.float()
+
+
+def command_gait_activation(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    activation_start: float = 0.02,
+    activation_full: float = 0.15,
+    yaw_weight: float = 0.25,
+) -> torch.Tensor:
+    """Return a smooth stand-to-gait activation in ``[0, 1]``."""
+    command = env.command_manager.get_command(command_name)
+    command_speed = torch.norm(command[:, :2], dim=-1) + yaw_weight * torch.abs(command[:, 2])
+    width = max(activation_full - activation_start, 1.0e-6)
+    activation = torch.clamp((command_speed - activation_start) / width, 0.0, 1.0)
+    return activation * activation * (3.0 - 2.0 * activation)
+
+
+def command_gated_gait_phase(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    period: float = 0.8,
+    activation_start: float = 0.02,
+    activation_full: float = 0.15,
+) -> torch.Tensor:
+    """Continuously blend the gait clock out of the standing value ``[0, 1]``."""
+    command_term = env.command_manager.get_term(command_name)
+    if hasattr(command_term, "gait_time"):
+        phase_value = torch.remainder(command_term.gait_time, period) / period
+        angle = 2.0 * math.pi * phase_value
+        phase = torch.stack((torch.sin(angle), torch.cos(angle)), dim=-1)
+    else:
+        phase = gait_phase(env, period)
+    activation = command_gait_activation(
+        env,
+        command_name,
+        activation_start=activation_start,
+        activation_full=activation_full,
+    ).unsqueeze(-1)
+    standing_phase = torch.zeros_like(phase)
+    standing_phase[:, 1] = 1.0
+    return standing_phase + activation * (phase - standing_phase)
+
+
+def zero_command_action_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    command_threshold: float = 0.05,
+) -> torch.Tensor:
+    """Penalize policy action magnitude only for near-zero commands."""
+    command = env.command_manager.get_command(command_name)
+    standing = torch.logical_and(
+        torch.norm(command[:, :2], dim=-1) < command_threshold,
+        torch.abs(command[:, 2]) < command_threshold,
+    )
+    return torch.sum(torch.square(env.action_manager.action), dim=-1) * standing.float()
+
+
+def zero_command_base_motion_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    command_threshold: float = 0.05,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize residual body translation and rotation while standing."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)
+    standing = torch.logical_and(
+        torch.norm(command[:, :2], dim=-1) < command_threshold,
+        torch.abs(command[:, 2]) < command_threshold,
+    )
+    motion = torch.sum(torch.square(asset.data.root_lin_vel_b), dim=-1)
+    motion += torch.sum(torch.square(asset.data.root_ang_vel_b), dim=-1)
+    return motion * standing.float()
+
+
+def zero_command_feet_contact_deficit(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    force_threshold: float = 5.0,
+    command_threshold: float = 0.05,
+) -> torch.Tensor:
+    """Require four-foot support only when the requested velocity is zero."""
+    command = env.command_manager.get_command(command_name)
+    standing = torch.logical_and(
+        torch.norm(command[:, :2], dim=-1) < command_threshold,
+        torch.abs(command[:, 2]) < command_threshold,
+    )
+    deficit = feet_contact_deficit(env, sensor_cfg, force_threshold)
+    return deficit * standing.float()
+
+
+def action_saturation_l2(env: ManagerBasedRLEnv, soft_limit: float = 1.0) -> torch.Tensor:
+    """Penalize raw actions that exceed a deployment-friendly soft limit."""
+    excess = torch.clamp(torch.abs(env.action_manager.action) - soft_limit, min=0.0)
+    return torch.sum(torch.square(excess), dim=-1)
+
+
+def _trot_stance_targets(
+    env: ManagerBasedRLEnv,
+    period: float,
+    command_name: str | None = None,
+) -> torch.Tensor:
+    """Build alternating FL/RR and FR/RL stance targets in FL, FR, RL, RR order."""
+    command_term = env.command_manager.get_term(command_name) if command_name is not None else None
+    if command_term is not None and hasattr(command_term, "gait_time"):
+        phase = torch.remainder(command_term.gait_time, period) / period
+    else:
+        step_buf = getattr(env, "policy_step_buf", env.episode_length_buf)
+        phase = torch.remainder(step_buf.float() * env.step_dt, period) / period
+    first_diagonal = (phase < 0.5).float()
+    second_diagonal = 1.0 - first_diagonal
+    return torch.stack(
+        (first_diagonal, second_diagonal, second_diagonal, first_diagonal),
+        dim=-1,
+    )
+
+
+def trot_phase_contact_reward(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    period: float = 0.8,
+    force_scale: float = 120.0,
+    sigma: float = 0.25,
+    activation_start: float = 0.02,
+    activation_full: float = 0.15,
+    command_threshold: float | None = None,
+) -> torch.Tensor:
+    """Reward force contacts that alternate between the two trot diagonals."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_forces = contact_sensor.data.net_forces_w_history[:, -1, sensor_cfg.body_ids]
+    contact = torch.clamp(torch.norm(contact_forces, dim=-1) / force_scale, 0.0, 1.0)
+    if command_threshold is not None:
+        activation_start = command_threshold
+        activation_full = command_threshold + 1.0e-6
+    trot_stance = _trot_stance_targets(env, period, command_name)
+    activation = command_gait_activation(
+        env,
+        command_name,
+        activation_start=activation_start,
+        activation_full=activation_full,
+    )
+    desired_stance = 1.0 - activation.unsqueeze(-1) * (1.0 - trot_stance)
+    contact_error = torch.mean(torch.square(contact - desired_stance), dim=-1)
+    return torch.exp(-contact_error / sigma) * activation
+
+
+def trot_phase_foot_velocity_penalty(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    period: float = 0.8,
+    min_swing_speed: float = 0.10,
+    max_swing_speed: float = 0.40,
+    command_speed_gain: float = 0.8,
+    activation_start: float = 0.02,
+    activation_full: float = 0.15,
+    command_threshold: float | None = None,
+) -> torch.Tensor:
+    """Penalize moving stance feet and swing feet that remain nearly stationary."""
+    if command_threshold is not None:
+        activation_start = command_threshold
+        activation_full = command_threshold + 1.0e-6
+    asset: Articulation = env.scene[asset_cfg.name]
+    foot_speed = torch.norm(asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :], dim=-1)
+    trot_stance = _trot_stance_targets(env, period, command_name)
+    activation = command_gait_activation(
+        env,
+        command_name,
+        activation_start=activation_start,
+        activation_full=activation_full,
+    )
+    desired_stance = 1.0 - activation.unsqueeze(-1) * (1.0 - trot_stance)
+    desired_swing = 1.0 - desired_stance
+
+    command = env.command_manager.get_command(command_name)
+    command_speed = torch.norm(command[:, :2], dim=-1) + 0.25 * torch.abs(command[:, 2])
+    target_swing_speed = activation * torch.clamp(
+        command_speed_gain * command_speed,
+        min=min_swing_speed,
+        max=max_swing_speed,
+    )
+    target_swing_speed = target_swing_speed.unsqueeze(-1)
+
+    stance_error = desired_stance * torch.square(foot_speed)
+    swing_error = desired_swing * torch.square(
+        torch.clamp(target_swing_speed - foot_speed, min=0.0)
+    )
+    error = torch.mean(stance_error + swing_error, dim=-1)
+
+    return error
+
+
+def feet_air_time(
+    env,
+    command_name: str,
+    vel_threshold: float,
+    sensor_cfg: SceneEntityCfg,
+    activation_full: float | None = None,
+) -> torch.Tensor:
     """奖励双足机器人脚部腾空时间，鼓励迈大步。
     
     如果在指令很小（即机器人不应该迈步）的情况下，奖励为零。
@@ -21,20 +342,109 @@ def feet_air_time(env, command_name: str, vel_threshold: float, sensor_cfg: Scen
     air_time = contact_sensor.data.current_air_time[:, sensor_cfg.body_ids]
     # 获取指定刚体当前的触地时间
     contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
-    # 判断是否处于接触（触地）状态
+    # 兼容四足：奖励摆动腿的腾空时间，避免双足任务中的“单脚支撑”假设导致奖励几乎恒为0。
     in_contact = contact_time > 0.0
-    # 获取当前状态持续的时间：如果接触则返回接触时间，否则返回腾空时间
-    in_mode_time = torch.where(in_contact, contact_time, air_time)
-    # 判断是否为单腿站立状态
-    single_stance = torch.sum(in_contact.int(), dim=1) == 1
-    # 如果是单脚站立则取对应的时间，否则取0，然后再沿着脚的维度取最小值
-    reward = torch.min(torch.where(single_stance.unsqueeze(-1), in_mode_time, 0.0), dim=1)[0]
+    swing_air_time = torch.where(in_contact, torch.zeros_like(air_time), air_time)
+    num_contact = torch.sum(in_contact.int(), dim=1)
+    has_swing = torch.logical_and(num_contact > 0, num_contact < in_contact.shape[1])
+    reward = torch.mean(swing_air_time, dim=1) * has_swing.float()
+    # ===== 新增 4 足均衡约束 =====
+    # 单脚最大腾空时间不能显著大于平均（防止某只脚长期悬空）
+    max_swing = torch.max(air_time, dim=1).values
+    mean_swing = torch.mean(air_time, dim=1)
+    asymmetry = torch.clamp(max_swing - 1.5 * (mean_swing + 0.1), min=0.0) ** 2
+    reward = reward - 0.3 * asymmetry
+    # ===== 结束 =====
     # 针对零指令的情况不给奖励
-    reward *= torch.logical_or(
-        torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > vel_threshold,
-        torch.abs(env.command_manager.get_command(command_name)[:, 2]) > vel_threshold,
-    )
+    if activation_full is None:
+        reward *= torch.logical_or(
+            torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > vel_threshold,
+            torch.abs(env.command_manager.get_command(command_name)[:, 2]) > vel_threshold,
+        )
+    else:
+        reward *= command_gait_activation(
+            env,
+            command_name,
+            activation_start=vel_threshold,
+            activation_full=activation_full,
+        )
     return reward
+
+
+def foot_contact_balance(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+    max_air_time: float = 0.5,
+) -> torch.Tensor:
+    """强制 4 足都参与：每只脚在 max_air_time 秒内必须接触过至少 1 次。
+
+    惩罚：任何一只脚腾空时间超过 max_air_time 的平方和。
+    用法：weight=-2.0，强制策略让所有 4 脚都参与支撑 / 摆动周期。
+
+    与 feet_air_time 的 4 足均衡约束互补：
+    - feet_air_time 的 asymmetry 是"软约束"（max > 1.5*mean 扣分）
+    - foot_contact_balance 是"硬约束"（单脚 > max_air_time 直接扣分）
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    air_time = contact_sensor.data.current_air_time[:, sensor_cfg.body_ids]  # (B, 4)
+    # 单脚腾空超过阈值 → 扣分（平方惩罚）
+    penalty = torch.sum(torch.clamp(air_time - max_air_time, min=0.0) ** 2, dim=1)
+    return penalty
+
+
+def feet_contact_deficit(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+    force_threshold: float = 5.0,
+) -> torch.Tensor:
+    """Return the bounded fraction of feet that are not supporting the robot.
+
+    Unlike accumulated air time, this stays in [0, 1] and is suitable for a
+    long zero-command stand episode where one airborne foot must not make the
+    value target grow quadratically with episode time.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_forces = contact_sensor.data.net_forces_w_history[:, -1, sensor_cfg.body_ids]
+    in_contact = torch.norm(contact_forces, dim=-1) > force_threshold
+    return 1.0 - in_contact.float().mean(dim=-1)
+
+
+def feet_air_time_balance(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+    vel_threshold: float = 0.15,
+) -> torch.Tensor:
+    """惩罚两组对角腿腾空时间不均衡。
+
+    B2RM 足端顺序按 [FL, FR, RL, RR] 处理：
+    - FL/RR 是一组对角腿
+    - FR/RL 是一组对角腿
+
+    直走时约束最强，转向时放轻，避免把转向需要的非对称步态压掉。
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    air_time = contact_sensor.data.current_air_time[:, sensor_cfg.body_ids]
+
+    fl_rr_air_time = 0.5 * (air_time[:, 0] + air_time[:, 3])
+    fr_rl_air_time = 0.5 * (air_time[:, 1] + air_time[:, 2])
+    error = torch.square(fl_rr_air_time - fr_rl_air_time)
+
+    cmd_vel = env.command_manager.get_command(command_name)
+    lin_cmd_mag = torch.norm(cmd_vel[:, :2], dim=1)
+    forward_cmd = lin_cmd_mag > vel_threshold
+    yaw_cmd = torch.abs(cmd_vel[:, 2]) > vel_threshold
+    gate = torch.where(
+        forward_cmd & ~yaw_cmd,
+        torch.ones_like(lin_cmd_mag),
+        torch.where(
+            yaw_cmd & ~forward_cmd,
+            torch.full_like(lin_cmd_mag, 0.2),
+            torch.full_like(lin_cmd_mag, 0.5),
+        ),
+    )
+    has_cmd = torch.logical_or(forward_cmd, yaw_cmd)
+    return error * gate * has_cmd.float()
 
 
 def stand_still(
@@ -99,11 +509,21 @@ def feet_close_xy_gauss(
     return torch.exp(-torch.clamp(threshold - feet_distance_y, min=0.0) / std**2) - 1
 
 
-def heading_error(env: ManagerBasedRLEnv, command_name: str) -> torch.Tensor:
-    """计算机器人当前航向和目标航向的误差。"""
-    # 计算偏航指令的绝对值
-    ang_vel_cmd = torch.abs(env.command_manager.get_command(command_name)[:, 2])
-    return ang_vel_cmd
+def heading_error(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """惩罚机器人在 yaw 方向上的实际角速度与指令之间的误差。
+    
+    当命令 ω_z=0 时，机器人实际还在转就要扣分。
+    当命令 ω_z≠0 时，惩罚跟踪误差。
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    cmd = env.command_manager.get_command(command_name)
+    actual_wz = asset.data.root_ang_vel_b[:, 2]
+    error = torch.abs(actual_wz - cmd[:, 2])
+    return error
 
 
 def dont_wait(
@@ -116,8 +536,60 @@ def dont_wait(
     lin_vel_cmd_x = env.command_manager.get_command(command_name)[:, 0]
     # 获取机器人机身 x 轴 的实际前进速度
     lin_vel_x = asset.data.root_lin_vel_b[:, 0]
-    # 如果指令 > 0.3，而实际速度过低则惩罚
-    return (lin_vel_cmd_x > 0.3) * ((lin_vel_x < 0.15).float() + (lin_vel_x < 0).float() + (lin_vel_x < -0.15).float())
+    # 如果指令 > 0.2，而实际速度过低则惩罚
+    return (lin_vel_cmd_x > 0.2) * ((lin_vel_x < 0.2).float() + (lin_vel_x < 0).float() + (lin_vel_x < -0.15).float())
+
+
+def velocity_command_deficit(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    command_threshold: float = 0.05,
+    target_ratio: float = 0.5,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize missing or reversed planar velocity for every nonzero command.
+
+    Each active axis is evaluated in its commanded direction.  For example, a
+    negative ``v_x`` command expects a negative measured ``v_x``; moving
+    forward is penalized just as much as standing still.  The term asks for at
+    least ``target_ratio`` of the requested speed, leaving the exponential
+    tracking reward to optimize the remaining precision.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    command_xy = env.command_manager.get_command(command_name)[:, :2]
+    actual_xy = asset.data.root_lin_vel_b[:, :2]
+
+    active_axes = torch.abs(command_xy) >= command_threshold
+    target_speed = torch.clamp(torch.abs(command_xy) * target_ratio, min=command_threshold)
+    signed_speed = torch.sign(command_xy) * actual_xy
+    axis_deficit = torch.clamp(target_speed - signed_speed, min=0.0) / target_speed
+
+    # Average only commanded axes. A zero command should be handled by the
+    # dedicated zero-command motion reward rather than this locomotion term.
+    return torch.sum(axis_deficit * active_axes, dim=-1) / torch.clamp(active_axes.sum(dim=-1), min=1)
+
+
+def must_turn(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    cmd_threshold: float = 0.2,
+    min_turn_rate: float = 0.15,
+    target_ratio: float = 0.0,
+) -> torch.Tensor:
+    """当存在明确 yaw 指令时，惩罚机器人没有朝正确方向开始转动。"""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    yaw_cmd = env.command_manager.get_command(command_name)[:, 2]
+    actual_wz = asset.data.root_ang_vel_b[:, 2]
+
+    signed_turn_rate = torch.sign(yaw_cmd) * actual_wz
+    target_turn_rate = torch.full_like(yaw_cmd, min_turn_rate)
+    if target_ratio > 0.0:
+        target_turn_rate = torch.maximum(target_turn_rate, target_ratio * torch.abs(yaw_cmd))
+    penalty = torch.clamp(target_turn_rate - signed_turn_rate, min=0.0) / torch.clamp(
+        target_turn_rate, min=1.0e-6
+    )
+    return (torch.abs(yaw_cmd) > cmd_threshold).float() * penalty
 
 
 def feet_orientation_contact(
@@ -200,3 +672,552 @@ def link_orientation(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEn
     return torch.sum(torch.square(link_projected_gravity[:, :2]), dim=1)
 
 
+def base_pitch_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """惩罚 base_link 的 pitch 后仰角（绕 y 轴），前倾不惩罚。
+
+    IsaacLab 约定：x=前进, y=左, z=上。绕 y 轴旋转得到 pitch：
+      - pitch > 0 → 后仰（nose 抬起）
+      - pitch < 0 → 前倾（nose 低下）
+
+    返回的 L2 惩罚只对 pitch > 0 部分生效，前倾给 0 奖励避免上坡时被误伤。
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    quat_w = asset.data.root_quat_w
+    _, pitch, _ = euler_xyz_from_quat(quat_w)
+    # 只惩罚后仰：clip 到 [0, +inf)
+    pitch_pos = torch.clamp(pitch, min=0.0)
+    return torch.square(pitch_pos)
+
+
+def roll_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """惩罚 roll 角度（绕 x 轴），使用绝对值惩罚。
+
+    对应 HYT 的 roll = -2.0: rew = |roll|。
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    quat_w = asset.data.root_quat_w
+    roll, _, _ = euler_xyz_from_quat(quat_w)
+    return torch.abs(roll)
+
+
+def feet_height(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+    target_height: float = 0.3,
+    minimum_target_height: float | None = None,
+    vel_threshold: float = 0.15,
+    activation_full: float | None = None,
+) -> torch.Tensor:
+    """奖励摆动脚抬到目标高度。
+
+    对应 HYT 的 feet_height = +1.0, feet_height_target = 0.3m。
+    只在脚离地（摆动相）时计算，目标高度 0.3m，使用高斯型奖励。
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    in_contact = contact_time > 0.0
+
+    # 脚的世界 z 坐标 - 地面高度 (用 base z 做近似)
+    foot_z = asset.data.body_pos_w[:, asset_cfg.body_ids, 2]
+    # 地面高度近似 = base_z - base_height_target
+    base_z = asset.data.root_pos_w[:, 2].unsqueeze(1)
+    foot_height_rel = foot_z - (base_z - 0.4)  # 0.4 ≈ 地面到基座的粗略偏移
+
+    if activation_full is None:
+        activation = torch.logical_or(
+            torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > vel_threshold,
+            torch.abs(env.command_manager.get_command(command_name)[:, 2]) > vel_threshold,
+        ).float()
+        target = torch.full_like(activation, target_height)
+    else:
+        activation = command_gait_activation(
+            env,
+            command_name,
+            activation_start=vel_threshold,
+            activation_full=activation_full,
+        )
+        minimum = target_height if minimum_target_height is None else minimum_target_height
+        target = minimum + activation * (target_height - minimum)
+
+    # 摆动相不触地的脚，高度接近速度相关目标就给奖励。
+    swing_height = torch.where(in_contact, torch.zeros_like(foot_height_rel), foot_height_rel)
+    reward = torch.exp(-torch.square(swing_height - target.unsqueeze(-1)) / 0.04)  # sigma≈0.2
+    reward = torch.mean(reward, dim=1)
+    return reward * activation
+
+
+def swing_foot_clearance_terrain_relative(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    sensor_cfg: SceneEntityCfg,
+    minimum_height: float = 0.04,
+    target_height: float = 0.08,
+    std: float = 0.03,
+    activation_start: float = 0.02,
+    activation_full: float = 0.15,
+) -> torch.Tensor:
+    """Reward only airborne feet for reaching useful terrain-relative clearance.
+
+    The legacy feet-height reward assigned a high Gaussian score to stance
+    feet after replacing their height with zero. That made shuffling all four
+    feet along the ground cheaper than creating a real swing phase.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    swing = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] <= 0.0
+
+    activation = command_gait_activation(
+        env,
+        command_name,
+        activation_start=activation_start,
+        activation_full=activation_full,
+    )
+    desired_height = minimum_height + activation * (target_height - minimum_height)
+    terrain_height = env.scene.env_origins[:, 2].unsqueeze(-1)
+    foot_height = asset.data.body_pos_w[:, asset_cfg.body_ids, 2] - terrain_height
+    height_score = torch.exp(-torch.square(foot_height - desired_height.unsqueeze(-1)) / (std * std))
+
+    swing_count = torch.clamp(torch.sum(swing.float(), dim=-1), min=1.0)
+    score = torch.sum(height_score * swing.float(), dim=-1) / swing_count
+    return score * torch.any(swing, dim=-1).float() * activation
+
+
+def touchdown_air_time_reward(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    minimum_air_time: float = 0.03,
+    optimal_air_time_start: float = 0.08,
+    optimal_air_time_end: float = 0.12,
+    long_swing_std: float = 0.05,
+    activation_start: float = 0.05,
+    activation_full: float = 0.15,
+) -> torch.Tensor:
+    """Reward a useful completed swing when the foot touches down.
+
+    Score completed swing time only at touchdown. Swings shorter than
+    ``minimum_air_time`` receive no reward; the score rises smoothly until
+    ``optimal_air_time_start``, stays maximal through the desired range, then
+    falls for excessively long swings. The smooth ramp avoids trapping early
+    training in a millisecond-contact shuffle gait.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+    last_air_time = contact_sensor.data.last_air_time[:, sensor_cfg.body_ids]
+
+    ramp_width = max(optimal_air_time_start - minimum_air_time, 1.0e-6)
+    ramp = torch.clamp((last_air_time - minimum_air_time) / ramp_width, 0.0, 1.0)
+    # Cubic smoothstep gives a continuous incentive between 30 ms and 80 ms.
+    rising_score = ramp * ramp * (3.0 - 2.0 * ramp)
+    long_swing_score = torch.exp(
+        -torch.square(torch.clamp(last_air_time - optimal_air_time_end, min=0.0))
+        / (long_swing_std * long_swing_std)
+    )
+    duration_score = torch.where(last_air_time <= optimal_air_time_end, rising_score, long_swing_score)
+    touchdown_score = duration_score * first_contact.float()
+
+    activation = command_gait_activation(
+        env,
+        command_name,
+        activation_start=activation_start,
+        activation_full=activation_full,
+    )
+    return torch.sum(touchdown_score, dim=-1) * activation
+
+
+def aperiodic_diagonal_contact_reward(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    activation_start: float = 0.08,
+    activation_full: float = 0.25,
+) -> torch.Tensor:
+    """Reward diagonal support without prescribing an external gait clock.
+
+    Feet must be ordered FL, FR, RL, RR. Either diagonal can be in stance, so
+    the policy remains free to choose cadence and phase while pacing/hopping
+    and permanent four-foot contact receive no reward.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact = (contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0.0).float()
+    if contact.shape[1] != 4:
+        raise ValueError(f"aperiodic_diagonal_contact_reward expects four feet, got {contact.shape[1]}.")
+
+    first_diagonal = 0.5 * (contact[:, 0] + contact[:, 3])
+    second_diagonal = 0.5 * (contact[:, 1] + contact[:, 2])
+    first_pair_agreement = 1.0 - torch.abs(contact[:, 0] - contact[:, 3])
+    second_pair_agreement = 1.0 - torch.abs(contact[:, 1] - contact[:, 2])
+    diagonal_opposition = torch.abs(first_diagonal - second_diagonal)
+    pattern_score = 0.5 * (first_pair_agreement + second_pair_agreement) * diagonal_opposition
+
+    activation = command_gait_activation(
+        env,
+        command_name,
+        activation_start=activation_start,
+        activation_full=activation_full,
+    )
+    return pattern_score * activation
+
+
+def aperiodic_non_diagonal_contact_penalty(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    activation_start: float = 0.02,
+    activation_full: float = 0.15,
+) -> torch.Tensor:
+    """Penalize non-diagonal support patterns using simulation-only contacts.
+
+    A forward pair (FL+FR or RL+RR), a same-side pair, four-foot impact, and
+    all-foot flight are all undesirable for the flat-trot acquisition task.
+    The contact signal remains privileged: it shapes training only and is not
+    part of the deployable actor observation.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact = (contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0.0).float()
+    if contact.shape[1] != 4:
+        raise ValueError(f"aperiodic_non_diagonal_contact_penalty expects four feet, got {contact.shape[1]}.")
+
+    non_diagonal_pairs = (
+        contact[:, 0] * contact[:, 1]  # FL-FR: front pair
+        + contact[:, 2] * contact[:, 3]  # RL-RR: rear pair
+        + contact[:, 0] * contact[:, 2]  # FL-RL: left side
+        + contact[:, 1] * contact[:, 3]  # FR-RR: right side
+    )
+    # Allow a brief one-foot transfer, but penalize zero, three, or four feet.
+    contact_count = contact.sum(dim=-1)
+    count_error = torch.square(torch.clamp(torch.abs(contact_count - 2.0) - 0.5, min=0.0))
+
+    activation = command_gait_activation(
+        env,
+        command_name,
+        activation_start=activation_start,
+        activation_full=activation_full,
+    )
+    return (non_diagonal_pairs + count_error) * activation
+
+
+def feet_height_balance(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+    max_height: float = 0.36,
+    base_to_ground_height: float = 0.4,
+) -> torch.Tensor:
+    """惩罚对角摆动腿高度不对称，以及单脚抬得过高。
+
+    B2RM 足端顺序按 [FL, FR, RL, RR] 处理：
+    - FL/RR 是一组对角腿
+    - FR/RL 是一组对角腿
+
+    只在两只对角腿同时处于摆动相时比较高度。直走时约束最强，转向时放轻，
+    避免压坏转向策略。
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    swing = contact_time <= 0.0
+
+    foot_z = asset.data.body_pos_w[:, asset_cfg.body_ids, 2]
+    base_z = asset.data.root_pos_w[:, 2].unsqueeze(1)
+    foot_height_rel = foot_z - (base_z - base_to_ground_height)
+
+    diagonal_pairs = ((0, 3), (1, 2))
+    pair_errors = []
+    for left_id, right_id in diagonal_pairs:
+        pair_swing = swing[:, left_id] & swing[:, right_id]
+        height_diff = foot_height_rel[:, left_id] - foot_height_rel[:, right_id]
+        pair_errors.append(torch.square(height_diff) * pair_swing.float())
+    symmetry_error = torch.stack(pair_errors, dim=1).sum(dim=1)
+
+    over_height = torch.clamp(foot_height_rel - max_height, min=0.0)
+    over_height_error = torch.sum(torch.square(over_height) * swing.float(), dim=1)
+
+    cmd_vel = env.command_manager.get_command(command_name)
+    lin_cmd_mag = torch.norm(cmd_vel[:, :2], dim=1)
+    forward_cmd = lin_cmd_mag > 0.1
+    yaw_cmd = torch.abs(cmd_vel[:, 2]) > 0.1
+    gate = torch.where(
+        forward_cmd & ~yaw_cmd,
+        torch.ones_like(lin_cmd_mag),
+        torch.where(
+            yaw_cmd & ~forward_cmd,
+            torch.full_like(lin_cmd_mag, 0.2),
+            torch.full_like(lin_cmd_mag, 0.5),
+        ),
+    )
+    has_cmd = torch.logical_or(forward_cmd, yaw_cmd)
+    return (symmetry_error + over_height_error) * gate * has_cmd.float()
+
+
+def work_l2(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """惩罚净做功（机械功率）的绝对值。|sum(tau * w)|。
+
+    对应 HYT 的 work = -0.003。
+    跳跃时做功大 → 重罚，步行时做功小 → 轻罚。
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    power = torch.abs(torch.sum(
+        asset.data.applied_torque[:, asset_cfg.joint_ids] * asset.data.joint_vel[:, asset_cfg.joint_ids], dim=1
+    ))
+    return power
+
+
+def delta_torques_l2(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """惩罚力矩变化平方和（力矩抖振）。
+
+    对应 HYT 的 delta_torques = -1.0e-7。
+    需要缓存上一帧的力矩。
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    # 无状态，使用近似：当前步的力矩平方乘以归一化系数
+    # 更好的实现需要缓存，但为了简单先这样
+    torques = asset.data.applied_torque[:, asset_cfg.joint_ids]
+    return torch.sum(torch.square(torques), dim=1) * 1.0
+
+
+class delta_torques(ManagerTermBase):
+    """力矩变化平方和（delta_torques），带缓存。
+
+    对应 HYT 的 delta_torques = -1.0e-7。
+    rew = sum((tau_t - tau_{t-1})^2)
+    """
+
+    def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        asset_cfg = cfg.params.get("asset_cfg", SceneEntityCfg("robot"))
+        self.asset = env.scene[asset_cfg.name]
+        self._last_torques = torch.zeros_like(self.asset.data.applied_torque[:, asset_cfg.joint_ids])
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    ) -> torch.Tensor:
+        curr_torques = self.asset.data.applied_torque[:, asset_cfg.joint_ids]
+        delta = torch.sum(torch.square(curr_torques - self._last_torques), dim=1)
+        self._last_torques[:] = curr_torques
+        return delta
+
+    def reset(self, env_ids):
+        self._last_torques[env_ids] = 0.0
+
+
+def feet_jerk_l2(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+) -> torch.Tensor:
+    """惩罚足端接触力变化率（接触力抖动）。
+
+    对应 HYT 的 feet_jerk = -0.0002。
+    由于需要两帧力数据，我们用力平方近似。
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w_history
+    curr_forces = forces[:, -1, sensor_cfg.body_ids]
+    # 用力的平方近似变化率（无状态版本）
+    return torch.sum(torch.norm(curr_forces, dim=-1), dim=1)
+
+
+class feet_jerk(ManagerTermBase):
+    """足端接触力变化率惩罚，带缓存。
+
+    对应 HYT 的 feet_jerk = -0.0002。
+    rew = sum(|F_t - F_{t-1}|)
+    """
+
+    def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        sensor_cfg = cfg.params.get("sensor_cfg", SceneEntityCfg("contact_forces", body_names=".*_foot"))
+        self.sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+        self._last_forces = torch.zeros(
+            env.num_envs, len(sensor_cfg.body_ids), 3, device=env.device
+        )
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+    ) -> torch.Tensor:
+        forces = self.sensor.data.net_forces_w_history[:, -1, sensor_cfg.body_ids]
+        jerk = torch.sum(torch.norm(forces - self._last_forces, dim=-1), dim=1)
+        self._last_forces[:] = forces
+        return jerk
+
+    def reset(self, env_ids):
+        self._last_forces[env_ids] = 0.0
+
+
+def contact_forces_penalty(
+    env: ManagerBasedRLEnv,
+    threshold: float,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+) -> torch.Tensor:
+    """惩罚超过阈值大小的足端接触力。
+
+    对应 HYT 的 feet_contact_forces = -0.001, max_contact_force=120N(B2RM)。
+    rew = sum(max(0, |F| - threshold))
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w_history[:, -1, sensor_cfg.body_ids]
+    contact_forces_norm = torch.norm(forces, dim=-1)
+    penalty = torch.clamp(contact_forces_norm - threshold, min=0.0)
+    return torch.sum(penalty, dim=1)
+
+
+def tracking_contacts_shaped_force(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+    sigma: float = 0.5,
+    kappa: float = 0.07,
+) -> torch.Tensor:
+    """Diagonal Trot 步态约束：惩罚对角接触力不对称 + 极端同步。
+
+    对应 HYT 的 tracking_contacts_shaped_force = -2.0。
+
+    原 bug：用 episode 时间硬跑 sin² 相位，期望"phase=0 全踩 / phase=0.5 全腾"，
+    4 足 Trot 模式下持续扣分 → 策略被逼学 bounding 跳。
+
+    修复后的语义：
+    - 惩罚 **非对角腿同时强接触**（anti-pacing / anti-bound）
+    - 鼓励 **"总接触力 ≈ 一半"**（避免全离地跳 + 避免四足同时重踩）
+    - kappa 用作 phase EMA 平滑（防止 episode reset 突变）
+
+    期望 contact 信号：
+    - 对角步时，非对角腿同步接触应尽量少
+    - 直行时约束更强，转向时适度放松
+    期望 force 均值：0.5（B2RM 满力 120N → 期望 60N 单腿均值）
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_forces = contact_sensor.data.net_forces_w_history[:, -1, sensor_cfg.body_ids]
+    contact_norm = torch.norm(contact_forces, dim=-1)  # (batch_size, 4)
+
+    # 归一化到 [0, 1]
+    max_force = 120.0
+    contact_norm = torch.clamp(contact_norm / max_force, 0.0, 1.0)
+
+    # 1) Anti-pacing：惩罚非对角腿同时强接触。
+    #    B2RM body_ids 顺序通常是 [FL, FR, RL, RR]。
+    #    理想对角步中，非对角配对同时强接触应尽量少。
+    symmetry_error = (
+        contact_norm[:, 0] * contact_norm[:, 1]  # FL-FR
+        + contact_norm[:, 0] * contact_norm[:, 2]  # FL-RL
+        + contact_norm[:, 1] * contact_norm[:, 3]  # FR-RR
+        + contact_norm[:, 2] * contact_norm[:, 3]  # RL-RR
+    )
+
+    # 2) 总接触力 ≈ 0.5（防 bounding 跳 + 防全 4 脚 stand）
+    #    行走时 2 脚触地，期望 mean force ≈ 0.5
+    #    sigma 当作容忍带：|mean-0.5| <= sigma 不扣分
+    mean_force = torch.mean(contact_norm, dim=1)
+    mean_dev = torch.abs(mean_force - 0.5) - sigma
+    mean_error = torch.clamp(mean_dev, min=0.0) ** 2
+
+    # kappa 用作 phase EMA 平滑（这里用 contact mean 当 phase proxy，避免 episode 突变）
+    # 当前步 phase 偏离上一步越多 → 越要抑制（防止策略乱跳）
+    if not hasattr(env, "_last_contact_mean"):
+        env._last_contact_mean = torch.zeros_like(mean_force)
+    phase_jitter = (mean_force - env._last_contact_mean) ** 2
+    env._last_contact_mean = (1.0 - kappa) * env._last_contact_mean + kappa * mean_force
+
+    # 总误差
+    error = symmetry_error + mean_error + phase_jitter
+
+    # 没速度命令时（应该 stand）不约束步态相位。
+    # 直行时最强调对角步；转向时适度放松，避免把已学到的转向能力压坏。
+    cmd_vel = env.command_manager.get_command(command_name)
+    lin_cmd_mag = torch.norm(cmd_vel[:, :2], dim=1)
+    forward_cmd = lin_cmd_mag > 0.1
+    yaw_cmd = torch.abs(cmd_vel[:, 2]) > 0.1
+    gate = torch.where(
+        forward_cmd & ~yaw_cmd,
+        torch.ones_like(lin_cmd_mag),
+        torch.where(
+            yaw_cmd & ~forward_cmd,
+            torch.full_like(lin_cmd_mag, 0.3),
+            torch.full_like(lin_cmd_mag, 0.7),
+        ),
+    )
+    has_cmd = torch.logical_or(forward_cmd, yaw_cmd)
+    return error * gate * has_cmd.float()
+
+
+def tracking_contacts_shaped_vel(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names=".*_foot"),
+    sigma: float = 0.5,
+) -> torch.Tensor:
+    """步态相位约束（足端速度形状）。
+
+    对应 HYT 的 tracking_contacts_shaped_vel = -2.0。
+
+    期望：摆动相足端速度快（抬腿），支撑相足端速度慢（接地不动）。
+    足端速度大的脚应该是摆动相，速度小的脚应该是支撑相。
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact_forces = contact_sensor.data.net_forces_w_history[:, -1, sensor_cfg.body_ids]
+    is_contact = torch.norm(contact_forces, dim=-1) > 1.0  # (batch_size, 4)
+
+    # 足端速度
+    foot_vel = asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :]  # (batch_size, 4, 3)
+    foot_speed = torch.norm(foot_vel, dim=-1)  # (batch_size, 4)
+
+    # 期望：接触的脚速度=0，不接触的脚速度≥sigma
+    # 惩罚：接触的脚在滑动，或不接触的脚不动（没抬腿）
+    swing_speed = torch.where(is_contact, torch.zeros_like(foot_speed), foot_speed - sigma)
+    swing_penalty = torch.clamp(-swing_speed, min=0.0)  # 摆动腿速度低于sigma → 惩罚
+    stance_speed = torch.where(is_contact, foot_speed, torch.zeros_like(foot_speed))
+    stance_penalty = stance_speed  # 接触腿还在滑动 → 惩罚
+
+    penalty = torch.sum(swing_penalty + stance_penalty, dim=1)
+
+    # 没速度命令时（应该 stand）不惩罚
+    cmd_vel = env.command_manager.get_command(command_name)
+    has_cmd = torch.logical_or(
+        torch.norm(cmd_vel[:, :2], dim=1) > 0.1,
+        torch.abs(cmd_vel[:, 2]) > 0.1,
+    )
+    penalty = penalty * has_cmd.float()
+    return penalty
+
+
+def walking_dof(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    vel_threshold: float = 0.15,
+    sigma: float = 0.05,
+) -> torch.Tensor:
+    """有行走命令时，鼓励关节保持 default 姿态。
+
+    对应 HYT 的 walking_dof = +1.5。
+    rew = exp(-0.05 * sum(|q - q_default|))
+    只在有速度指令时激活。
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    dof_error = torch.sum(torch.abs(
+        asset.data.joint_pos[:, asset_cfg.joint_ids] - asset.data.default_joint_pos[:, asset_cfg.joint_ids]
+    ), dim=1)
+    reward = torch.exp(-sigma * dof_error)
+
+    # 只在有行走命令时激活
+    has_cmd = torch.logical_or(
+        torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > vel_threshold,
+        torch.abs(env.command_manager.get_command(command_name)[:, 2]) > vel_threshold,
+    )
+    return reward * has_cmd.float()

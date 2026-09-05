@@ -104,6 +104,40 @@ class PerlinGutterTerrainCfg(HfTerrainBaseCfg, WallTerrainCfgMixin):
 
 
 @configclass
+class PerlinBowlPitTerrainCfg(HfTerrainBaseCfg, WallTerrainCfgMixin):
+    """Configuration for a raised mound/hill terrain on flat ground.
+
+    The terrain is a raised circular platform/hill where:
+    - Top of the mound is flat at specified height
+    - Edges have vertical walls (step up)
+    - Robot must climb up and over the mound
+    """
+
+    function = hf_terrains.perlin_bowl_pit_terrain
+    pit_depth: tuple[float, float] | float = (0.05, 1.0)  # height of the mound (5cm to 100cm)
+    pit_radius: tuple[float, float] | float = (0.5, 1.5)  # radius of the mound
+    perlin_cfg: PerlinPlaneTerrainCfg | None = None
+
+
+@configclass
+class PerlinPitTerrainCfg(HfTerrainBaseCfg, WallTerrainCfgMixin):
+    """Configuration for a pit/crater terrain below ground level.
+
+    The terrain is a flat-bottomed pit where:
+    - Bottom of the pit is below ground (negative height)
+    - Edges have vertical walls (90-degree drop)
+    - Robot spawns in the pit and must jump out
+    """
+
+    function = hf_terrains.perlin_pit_terrain
+    pit_depth: tuple[float, float] | float = (0.05, 1.0)  # depth of the pit (5cm to 100cm below ground)
+    pit_radius: tuple[float, float] | float = (0.5, 1.5)  # radius of the pit
+    raise_surrounding_ground: bool = False
+    """Whether to raise the surrounding ground by the pit depth, so the pit bottom stays near ground height."""
+    perlin_cfg: PerlinPlaneTerrainCfg | None = None
+
+
+@configclass
 class PerlinStairsUpDownTerrainCfg(HfTerrainBaseCfg, WallTerrainCfgMixin):
     """Configuration for a stairs up and down parkour terrain."""
 
@@ -207,4 +241,21 @@ class PerlinSquareGapTerrainCfg(HfTerrainBaseCfg, WallTerrainCfgMixin):
     platform_width: float = 1.5
     border_width: float = 0.0
 
+    perlin_cfg: PerlinPlaneTerrainCfg | None = None
+
+
+@configclass
+class PerlinCircleTrackTerrainCfg(HfTerrainBaseCfg):
+    """Configuration for a circular track terrain.
+
+    The terrain is a flat circular ring path where the robot walks in circles.
+    The center of the terrain is flat but the robot follows a circular path.
+    This encourages the robot to learn turning skills.
+    """
+
+    function = hf_terrains.perlin_circle_track_terrain
+    track_radius: tuple[float, float] | float = (3.0, 6.0)
+    track_width: float = 1.5
+    track_depth: tuple[float, float] | float = (0.1, 0.3)
+    center_size: float = 2.0
     perlin_cfg: PerlinPlaneTerrainCfg | None = None

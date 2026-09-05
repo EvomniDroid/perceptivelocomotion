@@ -8,9 +8,11 @@
 """首先启动 Isaac Sim 模拟器。"""
 
 import argparse
+import copy
 import multiprocessing as mp
 import os
 import sys
+from collections import OrderedDict
 
 from isaaclab.app import AppLauncher
 
@@ -44,6 +46,20 @@ parser.add_argument(
 parser.add_argument("--debug", action="store_true", default=False, help="Enable debug mode.")
 # train.py 专属参数
 parser.add_argument("--cprofile", action="store_true", default=False, help="Enable cProfile.")
+parser.add_argument("--stage2_at", type=int, default=10000, help="在 N 轮后从平地切换到全地形（0=禁用两阶段）")
+parser.add_argument(
+    "--stage2_plan",
+    type=str,
+    default="full",
+    choices=("full", "mound_pit", "pit_only"),
+    help="阶段2训练计划：full=全地形；mound_pit=凸台+坑专项；pit_only=仅训练出坑专项。",
+)
+parser.add_argument(
+    "--disable_arm_disturbance",
+    action="store_true",
+    default=False,
+    help="训练时关闭机械臂末端载荷随机与安全/工作空间姿态扰动事件。",
+)
 # 附加 Instinct-RL 的命令行参数
 cli_args.add_instinct_rl_args(parser)
 # 附加 AppLauncher 的命令行参数
@@ -86,6 +102,7 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 
 from instinctlab.utils.wrappers import InstinctRlVecEnvWrapper
 from instinctlab.utils.wrappers.instinct_rl import InstinctRlOnPolicyRunnerCfg
+from instinctlab.terrains.shared_terrain_cfg import FLAT_TRAINING_SUB_TERRAINS, TRAINING_SUB_TERRAINS
 
 # 如果在调试模式下，则等待附加 (attach) 调试器
 if args_cli.debug:
@@ -116,6 +133,104 @@ def auto_affinity():
     core_mask = ",".join(map(str, core_range))
     os.system(f"taskset -cp {core_mask} {os.getpid()}")
     print("Affinity auto updated to:", core_mask, "for rank:", rank)
+
+
+def _get_checkpoint_iteration(path: str) -> int:
+    """从 checkpoint 中读取已完成的训练轮数。"""
+    loaded_dict = torch.load(path, map_location="cpu", weights_only=False)
+    return int(loaded_dict.get("iter", 0))
+
+
+def _get_remaining_iterations(current_iteration: int, target_iteration: int) -> int:
+    """将目标总轮数转换成还需要继续训练的增量轮数。"""
+    return max(target_iteration - current_iteration, 0)
+
+
+def _clone_subterrains_by_keys(keys: list[str]) -> OrderedDict:
+    """从训练地形中按 key 挑出一个独立的子集，避免就地改坏全局配置。"""
+    return OrderedDict((key, copy.deepcopy(TRAINING_SUB_TERRAINS[key])) for key in keys)
+
+
+def _build_stage2_plan_subterrains(plan_name: str) -> OrderedDict:
+    if plan_name == "full":
+        return copy.deepcopy(TRAINING_SUB_TERRAINS)
+    if plan_name == "mound_pit":
+        sub_terrains = _clone_subterrains_by_keys(["perlin_rough", "raised_mound", "pit_crater"])
+        sub_terrains["perlin_rough"].proportion = 0.2
+        sub_terrains["raised_mound"].proportion = 0.4
+        sub_terrains["pit_crater"].proportion = 0.4
+        return sub_terrains
+    if plan_name == "pit_only":
+        sub_terrains = _clone_subterrains_by_keys(["perlin_rough", "pit_crater"])
+        sub_terrains["perlin_rough"].proportion = 0.2
+        sub_terrains["pit_crater"].proportion = 0.8
+        return sub_terrains
+    raise ValueError(f"Unknown stage2 plan: {plan_name}")
+
+
+def _apply_stage2_plan_overrides(env_cfg, plan_name: str):
+    """按专项计划覆写阶段2训练配置。
+
+    设计原则：
+    - full: 保持当前 stage2 逻辑不变
+    - mound_pit: 聚焦凸台/坑，降低初始难度和速度上限，让策略先学会过障再学更快
+    """
+    env_cfg.scene.terrain.terrain_generator.sub_terrains = _build_stage2_plan_subterrains(plan_name)
+
+    if plan_name == "full":
+        return "全地形 stage2"
+
+    if plan_name == "mound_pit":
+        env_cfg.scene.terrain.max_init_terrain_level = min(getattr(env_cfg.scene.terrain, "max_init_terrain_level", 3), 2)
+
+        base_velocity = getattr(env_cfg.commands, "base_velocity", None)
+        if base_velocity is not None and hasattr(base_velocity, "velocity_ranges"):
+            if "raised_mound" in base_velocity.velocity_ranges:
+                base_velocity.velocity_ranges["raised_mound"]["lin_vel_x"] = (0.0, 0.6)
+                base_velocity.velocity_ranges["raised_mound"]["ang_vel_z"] = (-0.08, 0.08)
+            if "pit_crater" in base_velocity.velocity_ranges:
+                base_velocity.velocity_ranges["pit_crater"]["lin_vel_x"] = (0.0, 0.5)
+                base_velocity.velocity_ranges["pit_crater"]["ang_vel_z"] = (-0.08, 0.08)
+
+        return "凸台+坑专项 stage2"
+
+    if plan_name == "pit_only":
+        env_cfg.scene.terrain.max_init_terrain_level = min(getattr(env_cfg.scene.terrain, "max_init_terrain_level", 3), 2)
+
+        base_velocity = getattr(env_cfg.commands, "base_velocity", None)
+        if base_velocity is not None and hasattr(base_velocity, "velocity_ranges"):
+            if "pit_crater" in base_velocity.velocity_ranges:
+                base_velocity.velocity_ranges["pit_crater"]["lin_vel_x"] = (0.2, 0.5)
+                base_velocity.velocity_ranges["pit_crater"]["ang_vel_z"] = (-0.08, 0.08)
+            if "perlin_rough" in base_velocity.velocity_ranges:
+                base_velocity.velocity_ranges["perlin_rough"]["lin_vel_x"] = (0.2, 0.6)
+
+        # 仅在出坑专项里做轻微放宽，验证高课程是否存在“出生即死”。
+        # 保持改动保守，避免把专项直接训成依赖拖腿/塌身存活。
+        terminations = getattr(env_cfg, "terminations", None)
+        if terminations is not None:
+            if hasattr(terminations, "calf_link_contact") and hasattr(terminations.calf_link_contact, "params"):
+                terminations.calf_link_contact.params["threshold"] = 50.0
+
+        return "仅出坑专项 stage2"
+
+    raise ValueError(f"Unknown stage2 plan: {plan_name}")
+
+
+def _disable_arm_disturbance_events(env_cfg) -> None:
+    """关闭机械臂随机扰动事件，只保留原任务/腿部训练逻辑。"""
+    if not hasattr(env_cfg, "events") or env_cfg.events is None:
+        return
+
+    for event_name in (
+        "arm_tip_payload",
+        "arm_safe_carry_pose",
+        "arm_workspace_target_reset",
+        "arm_workspace_target_interval",
+        "arm_pose_interval",
+    ):
+        if hasattr(env_cfg.events, event_name):
+            setattr(env_cfg.events, event_name, None)
 
 
 @hydra_task_config(args_cli.task, "instinct_rl_cfg_entry_point")
@@ -162,6 +277,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         log_root_path = args_cli.logroot
 
     print(f"[INFO] 将实验记录到以下目录: {log_root_path}")
+    print(f"[INFO] 阶段2计划: {args_cli.stage2_plan}")
     # 指定每次运行所在的日志目录名字格式: {时间戳}_{运行名称}
     log_dir = datetime.now().strftime("%Y%m%d_%H%M%S")
     if getattr(env_cfg, "run_name", None):
@@ -173,6 +289,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             log_dir += h_args.split("=")[0].split(".")[-1]
             log_dir += "-"
             log_dir += h_args.split("=")[1]
+    if args_cli.stage2_plan != "full":
+        log_dir += f"_stage2-{args_cli.stage2_plan}"
     log_dir = os.path.join(log_root_path, log_dir)
 
     if agent_cfg.resume:
@@ -185,10 +303,59 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         log_dir += f"_from{resume_run_name.split('_')[0]}_{resume_run_name.split('_')[1]}"
     # import pdb; pdb.set_trace()
     print("2")
+    # 判断两阶段训练
+    stage2_at = args_cli.stage2_at
+    is_resuming = agent_cfg.resume
+    resume_iter = 0
+    saved_sub_terrains = copy.deepcopy(TRAINING_SUB_TERRAINS)
+    stage2_plan_desc = "全地形 stage2"
+    stage2_env_cfg = None
+
+    if is_resuming:
+        resume_iter = _get_checkpoint_iteration(resume_path)
+        print(f"[恢复] checkpoint 当前轮数: {resume_iter}")
+
+    if stage2_at > 0 and resume_iter < stage2_at:
+        # Keep a clean copy for the second gym.make().
+        # IsaacLab managers resolve cfg fields in-place during env construction, so reusing
+        # the stage1 cfg after env.close() can make configclass validation recurse forever.
+        stage2_env_cfg = copy.deepcopy(env_cfg)
+        stage1_target_iter = min(stage2_at, agent_cfg.max_iterations)
+        print(f"[两阶段] 阶段1目标轮数: {stage1_target_iter}")
+        env_cfg.scene.terrain.terrain_generator.sub_terrains = FLAT_TRAINING_SUB_TERRAINS
+        stage2_mode = True
+    else:
+        stage2_mode = False
+        stage2_plan_desc = _apply_stage2_plan_overrides(env_cfg, args_cli.stage2_plan)
+        if stage2_at <= 0:
+            print(f"[训练] 单阶段模式: 直接使用 {stage2_plan_desc}")
+        else:
+            print(f"[训练] 当前 checkpoint 已达到/超过 stage1 目标轮数 {stage2_at}: 直接进入{stage2_plan_desc}")
+
+    if args_cli.disable_arm_disturbance:
+        _disable_arm_disturbance_events(env_cfg)
+        if stage2_env_cfg is not None:
+            _disable_arm_disturbance_events(stage2_env_cfg)
+        print("[INFO] --disable_arm_disturbance: 已关闭训练中的机械臂末端载荷随机与安全/工作空间姿态扰动。")
+
+    # The policy depth input uses a ray-caster camera, which does not require Isaac's rendered camera backend.
+    # Disable rendered RGB cameras during normal training unless video recording explicitly needs them.
+    if not args_cli.video:
+        if hasattr(env_cfg.scene, "rgb_camera"):
+            env_cfg.scene.rgb_camera = None
+            print("[INFO] Disabled scene.rgb_camera for training; raycaster depth camera remains enabled.")
+        if hasattr(env_cfg.scene, "camera_rgb_record"):
+            env_cfg.scene.camera_rgb_record = None
+            print("[INFO] Disabled scene.camera_rgb_record for training.")
+        if stage2_env_cfg is not None:
+            if hasattr(stage2_env_cfg.scene, "rgb_camera"):
+                stage2_env_cfg.scene.rgb_camera = None
+            if hasattr(stage2_env_cfg.scene, "camera_rgb_record"):
+                stage2_env_cfg.scene.camera_rgb_record = None
+
     # 创建 isaac 仿真环境
     print("进入环境构造")
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
-    # import pdb; pdb.set_trace()
     print("2.99")
     print("环境构造完成")
     # 为视频录制套上 Wrapper
@@ -209,42 +376,82 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # 封装环境适配 Instinct-RL 的读取要求
     env = InstinctRlVecEnvWrapper(env)
-    # import pdb; pdb.set_trace()
     print("3")
     # 从 instinct-rl 创建跑者 (runner)
     runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
-    # # 将当前的 git 代码仓库状态写入日志中
     runner.add_git_repo_to_log(__file__)
     # 加载已有的模型检查点 (checkpoint)
-    if agent_cfg.resume:
+    if is_resuming:
         print(f"[INFO]: 从此处加载模型参数与检查点: {resume_path}")
-        # 加载之前训练过的模型
         runner.load(resume_path)
 
-    # 将所有配置参数原样转储 (dump) 到日志目录记录
+    # 将所有配置参数原样转储到日志目录
     if not ("LOCAL_RANK" in os.environ and dist.get_rank() > 0):
-        # 通过判断 rank>0 ，以防止非 rank-0 零的主进程重复转储配置导致冲突
         dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
         dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
 
     if args_cli.cprofile:
         import cProfile
-
         cprofile = cProfile.Profile()
-        print(
-            "cProfile 性能分析已启用。程序完成运行后，会自动在日志目录下保存为以 .profile 结尾的日志文件。"
-        )
+        print("cProfile 性能分析已启用。")
         cprofile.enable()
-    # import pdb; pdb.set_trace()
+
     print("4")
-    print("按s")
-    # 开始执行主训练环节
-    runner.learn(
-        num_learning_iterations=agent_cfg.max_iterations,
-        init_at_random_ep_len=getattr(agent_cfg, "init_at_random_ep_len", False),
-    )
-    # import pdb; pdb.set_trace()
+    # ---- 阶段1: 平地训练 ----
+    if stage2_mode:
+        stage1_remaining = _get_remaining_iterations(runner.current_learning_iteration, stage1_target_iter)
+        stage1_ckpt = os.path.join(log_dir, f"model_flat_stage_{stage1_target_iter}.pt")
+
+        if stage1_remaining > 0:
+            print(f"[两阶段] 阶段1: 从第 {runner.current_learning_iteration} 轮继续平地训练 {stage1_remaining} 轮，到 {stage1_target_iter} 轮")
+            runner.learn(
+                num_learning_iterations=stage1_remaining,
+                init_at_random_ep_len=getattr(agent_cfg, "init_at_random_ep_len", False),
+            )
+            runner.save(stage1_ckpt)
+            print(f"[两阶段] 阶段1 完成! 保存 checkpoint: {stage1_ckpt}")
+        else:
+            stage1_ckpt = resume_path if is_resuming else stage1_ckpt
+            print(f"[两阶段] 阶段1已完成，直接使用 checkpoint: {stage1_ckpt}")
+
+        env.close()
+
+        # ---- 阶段2: 全地形 ----
+        stage2_remaining = _get_remaining_iterations(stage1_target_iter, agent_cfg.max_iterations)
+        if stage2_env_cfg is None:
+            stage2_env_cfg = copy.deepcopy(env_cfg)
+        stage2_plan_desc = _apply_stage2_plan_overrides(stage2_env_cfg, args_cli.stage2_plan)
+        print(f"[两阶段] 阶段2: 切换到{stage2_plan_desc}，目标总轮数 {agent_cfg.max_iterations}，剩余 {stage2_remaining} 轮")
+        env = gym.make(args_cli.task, cfg=stage2_env_cfg, render_mode="rgb_array" if args_cli.video else None)
+        if isinstance(env.unwrapped, DirectMARLEnv):
+            env = multi_agent_to_single_agent(env)
+        env = InstinctRlVecEnvWrapper(env)
+        runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+        runner.load(stage1_ckpt)
+        if not ("LOCAL_RANK" in os.environ and dist.get_rank() > 0):
+            dump_yaml(os.path.join(log_dir, "params", "env_stage2.yaml"), stage2_env_cfg)
+
+        stage2_remaining = _get_remaining_iterations(runner.current_learning_iteration, agent_cfg.max_iterations)
+        if stage2_remaining > 0:
+            runner.learn(
+                num_learning_iterations=stage2_remaining,
+                init_at_random_ep_len=getattr(agent_cfg, "init_at_random_ep_len", False),
+            )
+        else:
+            print(f"[两阶段] 阶段2无需继续训练: 当前轮数 {runner.current_learning_iteration} 已达到目标 {agent_cfg.max_iterations}")
+    else:
+        # ---- 单阶段 (全地形或恢复) ----
+        remaining_iterations = _get_remaining_iterations(runner.current_learning_iteration, agent_cfg.max_iterations)
+        if remaining_iterations > 0:
+            runner.learn(
+                num_learning_iterations=remaining_iterations,
+                init_at_random_ep_len=getattr(agent_cfg, "init_at_random_ep_len", False),
+            )
+        else:
+            print(f"[训练] 当前 checkpoint 已达到目标总轮数 {agent_cfg.max_iterations}，跳过训练。")
+
     print("5")
+    print("迭代完成")
     print("迭代")
     if args_cli.cprofile:
         cprofile.disable()

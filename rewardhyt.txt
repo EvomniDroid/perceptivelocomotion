@@ -1,0 +1,207 @@
+# 四足行走训练奖励与惩罚精华（B1Z1 / B2RM ManipLoco）
+# 源码参考:
+#   - DQ_low-level_hyt/legged_gym/envs/manip_loco/b1z1_config.py (rewards.scales)
+#   - DQ_low-level_hyt/legged_gym/envs/rewards/maniploco_rewards.py (reward 函数定义)
+#
+# 符号约定:  scale > 0 表示"奖励"(正贡献); scale < 0 表示"惩罚"(负贡献);
+#           0 / None 表示不参与训练但会记录。
+# 行走任务核心是让 base 跟踪 (vx, vy, yaw_rate) 命令并保持稳定、自然步态。
+# 跳跃/抓取相关项(jump_*, tracking_ee_*) 在行走训练中通常被关闭(0 或 None)。
+
+================================================================
+一、速度指令跟踪奖励 (核心正向)
+================================================================
+1. tracking_lin_vel = +1.0
+   跟踪 base 线速度 vx, vy 指令。
+   rew = exp( -||cmd - v_xy||^2 / tracking_sigma ),  tracking_sigma = 0.25
+   —— 高斯型"指令跟随"奖励, 是行走最核心的奖励。
+
+2. tracking_lin_vel_max = +2.0
+   max-shaped 版速度跟踪(在目标方向上"超额"也有奖励,鼓励加速)。
+
+3. tracking_lin_vel_x_exp = 0
+4. tracking_lin_vel_y_exp = +2.0
+   分别对 vx, vy 的指数型跟踪; 在本项目里 y 方向(侧向)权重更大。
+
+5. tracking_ang_vel = +0.5
+   跟踪偏航角速度指令 ωz:  rew = exp(-(cmd_w - w_z)^2 / sigma)
+
+================================================================
+二、步态 / 足端奖励 (gait shaping, 让走得更像走)
+================================================================
+6. tracking_contacts_shaped_force = -2.0
+   用接触力形状匹配期望的步态相位(footfall pattern)。
+   —— 负号代表"鼓励匹配",本质是把形状差异作为正贡献减进总奖励。
+
+7. tracking_contacts_shaped_vel = -2.0
+   用足端速度形状匹配期望的步态相位(摆动腿抬起,支撑腿不拖)。
+
+8. feet_air_time = +2.0
+   鼓励每只脚离开地面足够时间, 抑制"原地高频小颠"。
+
+9. feet_height = +1.0
+   摆动相抬脚达到目标高度 feet_height_target = 0.3 m, 鼓励迈步。
+   配置: feet_height_target = 0.3, feet_height_allfeet = False,
+          feet_aritime_allfeet = False(B2RM 配置为 True)。
+
+10. feet_drag = -0.08
+    惩罚摆动相脚在地面上拖动(foot 速度 × 接触标记)。
+    —— 反"小碎步 / 拖脚"。
+
+11. feet_contact_forces = -0.001
+    惩罚超过 max_contact_force 的接触力(B1Z1=40N, B2RM=120N)。
+    rew = sum( max(0, |F| - max_contact_force) )
+
+12. feet_jerk = -0.0002
+    接触力变化率惩罚, 让足端冲击更柔和。
+
+13. hip_pos = -0.3
+    髋关节角度偏离 default 姿态的平方和惩罚, 保持腿部自然张开。
+
+================================================================
+三、稳定性 / 姿态奖励 (稳住机身)
+================================================================
+14. base_height = -4.0
+    惩罚 base 离地高度偏离 base_height_target。
+    —— B1Z1 target = 0.55 m,  B2RM target = 0.51 m。
+    rew = |base_z - base_height_target|
+
+15. lin_vel_z = -1.5
+    惩罚 base 在世界系 z 方向上的线速度(防止上下蹦)。
+    rew = (vz)^2
+
+16. ang_vel_xy = -0.2
+    惩罚 base 的 roll/pitch 角速度(防机身扭动)。
+    rew = ||w_xy||^2
+
+17. orientation = 0.0
+    projection_gravity 的 xy 分量平方和(可选,本配置关闭)。
+
+18. roll = -2.0
+    直接惩罚 roll 角: rew = |roll|。
+
+19. ang_vel_xy = -0.2  (重复列出, 与第16项一致)
+
+20. tracking_lin_vel_y_l2 / lin_vel_z_l2: 通常为 0(可选平方误差型跟踪)。
+
+================================================================
+四、平滑性 / 能效惩罚 (走得省力、连续)
+================================================================
+21. torques = -2.5e-5
+    关节力矩 L2 惩罚, 抑制高力矩。
+
+22. dof_acc = -7.5e-7
+    关节加速度平方和:  rew = sum(((v_t - v_{t-1})/dt)^2)
+    —— 鼓励关节速度变化平缓。
+
+23. action_rate = -0.015
+    动作差分平方和:  rew = ||a_t - a_{t-1}||^2  (跳跃时 mask 掉)
+    —— 鼓励动作时序平滑。
+
+24. delta_torques = -1.0e-7
+    力矩变化平方和(抑制力矩抖振)。
+
+25. work = -0.003
+    净做功(机械功率)的绝对值: |sum(tau * w)|, 跳跃时屏蔽。
+    —— 减小负功(发电)与正功(耗能)。
+
+26. energy_square = 0.0  (可选, 默认关闭)
+    平方型能量: sum((tau * w)^2)
+
+27. arm_residual_l2 = None
+    残差动作 L2(机械臂用,行走时不参与)。
+
+================================================================
+五、站立 / 静止姿态奖励 (命令为零时回中立)
+================================================================
+28. stand_still = +1.0
+    在"无行走命令"且"非跳跃"时,鼓励关节回到 default 姿态:
+    rew = exp( -0.05 * sum(|q - q_default|) ),  行走命令或跳跃时为 0。
+
+29. walking_dof = +1.5
+    "有行走命令"时, 同样鼓励关节保持 default 姿态(避免乱踢)。
+    rew = exp( -0.05 * sum(|q - q_default|) )
+
+30. alive = +1.0
+    常数 1, 只要没终止就给奖励, 鼓励"活下去不倒"。
+
+================================================================
+六、安全 / 碰撞 / 越界惩罚
+================================================================
+31. collision = -10.0
+    惩罚身体与环境的接触(penalized_contact_indices 的力 > 0.1N):
+    rew = count( |F| > 0.1 )
+
+32. dof_pos_limits = -10.0
+    关节位置超出 soft 限制的量(线性惩罚,鼓励不撞限位)。
+
+33. lin_vel_z = -1.5  (重复; 同时也防止上下蹦)
+
+34. non_jump_all_feet_off = 0  (本项目关闭; 默认 0)
+    非跳跃时四脚同时离地则惩罚(防"假跳")。
+
+================================================================
+七、机械臂相关项 (行走训练中常关闭, 仅记录)
+================================================================
+35. arm_scales.tracking_ee_world = +1.5
+36. arm_scales.tracking_ee_orn   = +0.2
+    跟踪末端世界位姿/姿态, 由 base_height 补偿补偿高度波动。
+    (manip_loco 任务使用, 纯行走训练可关)
+
+================================================================
+八、跳跃相关项 (纯行走训练通常置 0, 这里仅作记录)
+================================================================
+jump_peak_height, jump_height_vel_tracking, jump_height_vel_max,
+jump_stage2_success, jump_target_height_success, jump_takeoff_reachability,
+jump_push_force_balance, jump_leg_bend_symmetry 等
+—— 见 b1z1_config.py rewards.scales 中以 jump_ 开头的项, 本配置除
+   jump_height_vel_tracking / jump_height_vel_max = 2.0 外, 其余
+   行走训练中通常被设为 0 或 None。
+
+================================================================
+九、终止条件 (training.termination)
+================================================================
+- roll > r_threshold  -> terminate     (r_threshold = 0.8 rad)
+- pitch > p_threshold -> terminate     (p_threshold = 0.8 rad)
+- base_z < z_threshold-> terminate     (z_threshold = 0.1 m)
+  —— 倒下/掉到太低就结束 episode。
+
+================================================================
+十、关键默认常量 (走路时取这些值)
+================================================================
+base_height_target    = 0.55  (B1Z1) / 0.51  (B2RM)
+tracking_sigma        = 0.25
+tracking_ee_sigma     = 1.0
+soft_dof_pos_limit    = 1.0   (URDF limit 的百分比)
+soft_torque_limit     = 0.4   (扭矩软上限比例)
+soft_dof_vel_limit    = 1.0
+max_contact_force     = 40    (B1Z1) / 120   (B2RM)
+gait_vel_sigma        = 0.5
+gait_force_sigma      = 0.5
+kappa_gait_probs      = 0.07
+feet_height_target    = 0.3   (摆动脚目标抬腿高度)
+only_positive_rewards = False (允许负奖励)
+
+================================================================
+"四足行走精华" — 6 个最关键项
+================================================================
+按"对最终 locomotion 质量的边际贡献"排序, 如果你要把行走能力复用到
+另一个项目, 至少保留下面这 6 项, 大致就能让四足学会稳定跟踪命令走起来:
+
+  1) tracking_lin_vel            (+1.0)  exp() 跟踪 (vx, vy)
+  2) tracking_ang_vel            (+0.5)  exp() 跟踪 wz
+  3) base_height                 (-4.0)  锁住离地高度
+  4) lin_vel_z + ang_vel_xy      (-1.5/-0.2) 抑制上下/扭动
+  5) tracking_contacts_shaped_*  (-2.0/-2.0) 步态相位形状
+  6) torques + action_rate + work (-2.5e-5 / -0.015 / -0.003)  能效/平滑
+  辅助(强烈推荐): feet_air_time, feet_height, feet_drag, feet_contact_forces,
+                   collision, dof_pos_limits, alive, stand_still, walking_dof。
+
+================================================================
+"训练行走的命令"与"非行走命令"如何区分
+================================================================
+- _get_walking_cmd_mask():  cmd[0,1,2] 任意一个大于阈值则视为"行走"环境
+- stand_still 仅在"无行走命令"时生效;
+  walking_dof 仅在"有行走命令"时生效;
+  base_height / lin_vel_z / feet_* / 各类平滑项在跳跃时通过 _jump_mask
+  屏蔽, 避免跳跃动力学污染 locomotion 信号。

@@ -1,0 +1,46 @@
+B2RM handoff stand policy
+=========================
+
+Run:
+  20260802_173734_from20260802_144939
+
+Checkpoint:
+  model_5000.pt
+  SHA256: 74d7fd60587d108962d764edca020090525b68db7b607c173f2419fb4a37af08
+
+ONNX:
+  exported/actor.onnx
+  SHA256: 16ab635234e9ebb10965bb5b28b90b17f04ef67df060ea0081940a0fc02e92cf
+  opset: 12
+  input: [1, 72]
+  output: [1, 18]
+
+Policy interface:
+  observation dimension: 72
+  action dimension: 18
+  leg action scale: 0.4 rad
+
+Scripted handoff:
+  prone -> target1: 0.8 s
+  target1 -> target2: 0.8 s
+  target2 high-gain hold: 0.4 s
+  stand PD: Kp=1000, Kd=10
+  policy PD: Kp=250, Kd=5
+  gain switch duration: 0.0 s (instantaneous)
+  policy action blend duration: 0.0 s
+  velocity command: zero
+
+Intended use:
+  First policy in the dual-policy play pipeline. It receives zero velocity
+  command after the scripted stand-up, then hands control to the walking
+  policy after the configured stable-standing interval.
+
+Validation note:
+  The strict training run ended episodes at 114 steps with rear-calf contact
+  termination. In play with --no_terminate it can visibly settle and stand,
+  but this checkpoint is still experimental and is not a validated real-robot
+  stability policy.
+
+Paired walking policy:
+  ../20260802_144939/model_3000.pt
+  SHA256: 67889d51e291ea7261f45fffdc7219cb67a1203ea9ced4d6246ebfef5fe69d93

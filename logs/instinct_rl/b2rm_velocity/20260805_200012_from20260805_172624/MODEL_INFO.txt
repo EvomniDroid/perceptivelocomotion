@@ -1,0 +1,69 @@
+B2RM LEG-ONLY VELOCITY HISTORY MODEL - SWING CLEARANCE FINETUNE
+================================================================
+
+Run: 20260805_200012_from20260805_172624
+Warm start: 20260805_172624/model_2500.pt
+Checkpoint: model_4000.pt
+Task: Instinct-B2RM-LegOnly-Velocity-History-v0
+Play task: Instinct-B2RM-LegOnly-Velocity-History-Play-v0
+
+Policy interface
+----------------
+Actor input: 360 float32 values (8 frames x 45 values)
+Per-frame order:
+  joint_pos[12], joint_vel[12], base_ang_vel[3], projected_gravity[3],
+  velocity_command[vx, vy, wz], previous_raw_action[12]
+Actor output: 12 raw leg joint-position residual actions
+Joint order: FL/FR/RL/RR hip, FL/FR/RL/RR thigh, FL/FR/RL/RR calf
+Action scale: 0.3 rad around the target2/default joint pose
+Action bounds: [-1, 1]
+Action low-pass: filtered = 0.8 * raw + 0.2 * previous_filtered
+The actor has no foot-contact, base-linear-velocity, gait-phase, or arm output.
+
+Control and limits
+------------------
+Policy/control period: 0.02 s (50 Hz)
+Physics period: 0.005 s
+Leg PD: Kp=250, Kd=5
+Leg actuator delay randomization: 0-2 physics steps
+Effort limits: hip=200 Nm, thigh=200 Nm, calf=320 Nm
+Velocity limits: hip=23 rad/s, thigh=23 rad/s, calf=14 rad/s
+Arm: fixed folded target maintained outside the 12-D policy action
+
+Finetune changes
+----------------
+Swing-foot clearance is rewarded only while a foot is airborne, relative to
+local terrain height. The target clearance band is 0.04-0.08 m.
+An aperiodic diagonal-contact reward encourages diagonal support without adding
+a gait clock or gait-phase observation. Foot-slide penalty was strengthened and
+leg joint-deviation regularization was relaxed.
+
+Checkpoint-4000 training snapshot (last 100 iterations)
+--------------------------------------------------------
+Mean episode length: 978.4 / 1000
+Timeout termination: 97.91 percent
+Calf contact termination: 0.89 percent
+Bad-orientation termination: 0.015 percent
+Mean vx error: 0.0534 m/s
+Mean vy error: 0.0443 m/s
+Zero-command drift: 0.0314 m/s
+Velocity command curriculum level: 0.6
+
+Known limitation
+----------------
+Right-front foot slide remains high at approximately 0.306 m/s. Air times are
+improving but remain short, so validate the gait visually before real deployment.
+
+Artifact verification
+---------------------
+model_4000.pt SHA256:
+  5767ed2f96385a51b9897cafc0069f1d7e1cf31486d8ca4c5fbbb634db89563a
+exported/actor.onnx SHA256:
+  c29cbb92f522ce6b744952c6197b5a1fc5edfedaed40cf73fbe1434281278307
+ONNX Runtime check: input [1, 360], output [1, 12], maximum absolute
+PyTorch/ONNX difference 1.79e-7 on a deterministic random input.
+
+Deployment note
+---------------
+Use the 360-D eight-frame deployment adapter with the exact term order above.
+Begin takeover at zero command and validate at 0.05-0.10 m/s first.

@@ -31,6 +31,13 @@ docker/artifacts/
 logs
 outputs
 
+# Local training artifacts: keep code/configuration in Git, not generated data.
+record/
+*.pt
+*.onnx
+*.tfevents.*
+.vscode/browse.vc.db*
+
 # Isaac-Sim packman
 _isaac_sim*
 _repo
