@@ -8,6 +8,7 @@ from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.sensors import ImuCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 
@@ -22,7 +23,7 @@ from .b2rm_velocity_cfg import (
     B2RMLegOnlyVelocityRewardsCfg,
     B2RMVelocityEnvCfg,
 )
-from .b2rm_parkour_cfg import B2RMEventsCfg
+from .b2rm_parkour_cfg import B2RMEventsCfg, B2RMSceneCfg
 
 
 B2RM_TARGET2_LEG_POS = {
@@ -42,6 +43,15 @@ B2RM_TARGET2_LEG_POS = {
 
 B2RM_GAIT_ACTIVATION_START = 0.02
 B2RM_GAIT_ACTIVATION_FULL = 0.15
+B2RM_PROPRIO_HISTORY_LENGTH = 6
+@configclass
+class B2RMVelocityEstimatorSceneCfg(B2RMSceneCfg):
+    """B2RM scene with the deployable base IMU used by the velocity estimator."""
+
+    imu = ImuCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/base_link",
+        debug_vis=False,
+    )
 
 
 @configclass
@@ -59,14 +69,14 @@ class B2RMFilteredLegOnlyActionsCfg(B2RMLegOnlyActionsCfg):
 
 @configclass
 class B2RMLegOnlyVelocityHistoryPolicyObsCfg(ObsGroup):
-    """Eight-frame deployable history using only real-robot observables."""
+    """Six-frame deployable history using only real-robot observables."""
 
     joint_pos = ObsTerm(
         func=mdp.joint_pos_rel,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"])},
         noise=Unoise(n_min=-0.01, n_max=0.01),
         clip=(-10, 10),
-        history_length=8,
+        history_length=B2RM_PROPRIO_HISTORY_LENGTH,
         flatten_history_dim=True,
     )
     joint_vel = ObsTerm(
@@ -74,29 +84,47 @@ class B2RMLegOnlyVelocityHistoryPolicyObsCfg(ObsGroup):
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"])},
         noise=Unoise(n_min=-0.01, n_max=0.01),
         clip=(-50, 50),
-        history_length=8,
+        history_length=B2RM_PROPRIO_HISTORY_LENGTH,
+        flatten_history_dim=True,
+    )
+    base_lin_acc = ObsTerm(
+        func=mdp.imu_lin_acc,
+        params={"asset_cfg": SceneEntityCfg("imu")},
+        noise=Unoise(n_min=-0.10, n_max=0.10),
+        clip=(-30, 30),
+        history_length=B2RM_PROPRIO_HISTORY_LENGTH,
         flatten_history_dim=True,
     )
     base_ang_vel = ObsTerm(
-        func=mdp.base_ang_vel,
+        func=mdp.imu_ang_vel,
+        params={"asset_cfg": SceneEntityCfg("imu")},
         noise=Unoise(n_min=-0.01, n_max=0.01),
         clip=(-20, 20),
-        history_length=8,
+        history_length=B2RM_PROPRIO_HISTORY_LENGTH,
         flatten_history_dim=True,
     )
     projected_gravity = ObsTerm(
-        func=mdp.projected_gravity,
+        func=mdp.imu_projected_gravity,
+        params={"asset_cfg": SceneEntityCfg("imu")},
         noise=Unoise(n_min=-0.01, n_max=0.01),
-        history_length=8,
+        history_length=B2RM_PROPRIO_HISTORY_LENGTH,
         flatten_history_dim=True,
     )
     velocity_commands = ObsTerm(
         func=mdp.generated_commands,
         params={"command_name": "base_velocity"},
-        history_length=8,
+        history_length=B2RM_PROPRIO_HISTORY_LENGTH,
         flatten_history_dim=True,
     )
-    actions = ObsTerm(func=instinct_mdp.last_action, history_length=8, flatten_history_dim=True)
+    actions = ObsTerm(
+        func=instinct_mdp.last_action,
+        history_length=B2RM_PROPRIO_HISTORY_LENGTH,
+        flatten_history_dim=True,
+    )
+    # This is the supervised target slot. The policy model replaces it with
+    # the estimator output during both training and inference.
+    base_lin_vel = ObsTerm(func=mdp.base_lin_vel, clip=(-3, 3))
+
     def __post_init__(self):
         self.enable_corruption = True
         self.concatenate_terms = False
@@ -109,18 +137,33 @@ class B2RMLegOnlyVelocityHistoryCriticObsCfg(B2RMLegOnlyVelocityHistoryPolicyObs
     joint_pos = ObsTerm(
         func=mdp.joint_pos_rel,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"])},
-        history_length=8,
+        history_length=B2RM_PROPRIO_HISTORY_LENGTH,
         flatten_history_dim=True,
     )
     joint_vel = ObsTerm(
         func=mdp.joint_vel_rel,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"])},
-        history_length=8,
+        history_length=B2RM_PROPRIO_HISTORY_LENGTH,
         flatten_history_dim=True,
     )
-    base_lin_vel = ObsTerm(func=mdp.base_lin_vel, history_length=8, flatten_history_dim=True)
-    base_ang_vel = ObsTerm(func=mdp.base_ang_vel, history_length=8, flatten_history_dim=True)
-    projected_gravity = ObsTerm(func=mdp.projected_gravity, history_length=8, flatten_history_dim=True)
+    base_lin_acc = ObsTerm(
+        func=mdp.imu_lin_acc,
+        params={"asset_cfg": SceneEntityCfg("imu")},
+        clip=(-30, 30),
+        history_length=B2RM_PROPRIO_HISTORY_LENGTH,
+        flatten_history_dim=True,
+    )
+    base_lin_vel = ObsTerm(func=mdp.base_lin_vel, clip=(-3, 3))
+    base_ang_vel = ObsTerm(
+        func=mdp.base_ang_vel,
+        history_length=B2RM_PROPRIO_HISTORY_LENGTH,
+        flatten_history_dim=True,
+    )
+    projected_gravity = ObsTerm(
+        func=mdp.projected_gravity,
+        history_length=B2RM_PROPRIO_HISTORY_LENGTH,
+        flatten_history_dim=True,
+    )
     # Contact remains available to the critic and rewards during training, but
     # is deliberately excluded from the deployable actor observation. The B2RM
     # low-state force fields did not provide a separable loaded/unloaded signal.
@@ -134,7 +177,7 @@ class B2RMLegOnlyVelocityHistoryCriticObsCfg(B2RMLegOnlyVelocityHistoryPolicyObs
             ),
             "force_threshold": 20.0,
         },
-        history_length=8,
+        history_length=B2RM_PROPRIO_HISTORY_LENGTH,
         flatten_history_dim=True,
     )
 
@@ -215,9 +258,8 @@ class B2RMLegOnlyVelocityHistoryEventsCfg(B2RMEventsCfg):
 class B2RMLegOnlyVelocityHistoryRewardTermsCfg(B2RMLegOnlyVelocityRewardsCfg):
     """Velocity rewards augmented for quiet zero-command deployment."""
 
-    # Let the policy discover its own gait from state history. These inherited
-    # terms encode a fixed diagonal-trot clock and would reintroduce phase
-    # supervision even though phase is no longer part of the observation.
+    # Do not prescribe a phase clock. Match Parkour's contact-driven gait
+    # shaping so the policy can adapt its stepping timing to terrain later.
     trot_phase_contact = None
     trot_phase_foot_velocity = None
 
@@ -276,8 +318,11 @@ class B2RMLegOnlyVelocityHistoryRewardTermsCfg(B2RMLegOnlyVelocityRewardsCfg):
         params={"soft_limit": 0.7},
     )
     feet_height = RewTerm(
-        func=mdp.swing_foot_clearance_terrain_relative,
-        weight=1.5,
+        # Match the historical Parkour Stage-1 shaping exactly for an A/B
+        # comparison. This is base-relative (not terrain-relative): its 0.30
+        # target uses the legacy base-to-ground offset inside ``mdp.feet_height``.
+        func=mdp.feet_height,
+        weight=1.0,
         params={
             "command_name": "base_velocity",
             "asset_cfg": SceneEntityCfg(
@@ -290,16 +335,24 @@ class B2RMLegOnlyVelocityHistoryRewardTermsCfg(B2RMLegOnlyVelocityRewardsCfg):
                 body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
                 preserve_order=True,
             ),
-            "minimum_height": 0.04,
-            "target_height": 0.08,
-            "std": 0.03,
-            "activation_start": B2RM_GAIT_ACTIVATION_START,
-            "activation_full": B2RM_GAIT_ACTIVATION_FULL,
+            "target_height": 0.3,
         },
     )
-    diagonal_contact = RewTerm(
-        func=mdp.aperiodic_diagonal_contact_reward,
-        weight=1.0,
+    foot_contact_balance = RewTerm(
+        func=mdp.foot_contact_balance,
+        weight=-2.0,
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
+            ),
+            "max_air_time": 1.0,
+        },
+    )
+    feet_air_time_balance = RewTerm(
+        func=mdp.feet_air_time_balance,
+        weight=-1.0,
         params={
             "command_name": "base_velocity",
             "sensor_cfg": SceneEntityCfg(
@@ -307,8 +360,75 @@ class B2RMLegOnlyVelocityHistoryRewardTermsCfg(B2RMLegOnlyVelocityRewardsCfg):
                 body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
                 preserve_order=True,
             ),
-            "activation_start": 0.08,
-            "activation_full": 0.25,
+            "vel_threshold": 0.15,
+        },
+    )
+    # Privileged training-only contact shaping. It rewards exactly one
+    # diagonal support pair and gives no reward to four-foot hopping, without
+    # adding a contact input that the real robot cannot reliably provide.
+    diagonal_contact = RewTerm(
+        func=mdp.aperiodic_diagonal_contact_reward,
+        weight=2.0,
+        params={
+            "command_name": "base_velocity",
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
+            ),
+            "activation_start": B2RM_GAIT_ACTIVATION_START,
+            "activation_full": B2RM_GAIT_ACTIVATION_FULL,
+        },
+    )
+    non_diagonal_contact = RewTerm(
+        func=mdp.aperiodic_non_diagonal_contact_penalty,
+        weight=-1.0,
+        params={
+            "command_name": "base_velocity",
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
+            ),
+            "activation_start": B2RM_GAIT_ACTIVATION_START,
+            "activation_full": B2RM_GAIT_ACTIVATION_FULL,
+        },
+    )
+    # Same physical distinction used by Parkour: a support foot should be
+    # quiet while an unloaded foot must genuinely move, not hover or chatter.
+    tracking_contacts_shaped_vel = RewTerm(
+        func=mdp.tracking_contacts_shaped_vel,
+        weight=-2.0,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
+            ),
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
+            ),
+            "sigma": 0.5,
+        },
+    )
+    # Borrow Parkour's anti-bound contact-force structure. It penalizes front,
+    # rear and same-side simultaneous loading, so a four-foot hop cannot
+    # satisfy the gait objective even when its velocity tracking is good.
+    tracking_contacts_shaped_force = RewTerm(
+        func=mdp.tracking_contacts_shaped_force,
+        weight=-2.0,
+        params={
+            "command_name": "base_velocity",
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
+            ),
+            "sigma": 0.5,
+            "kappa": 0.07,
         },
     )
 
@@ -324,13 +444,13 @@ class B2RMVelocityHistoryCurriculumCfg(CurriculumCfg):
 
     terrain_levels = None
     velocity_command_levels = CurrTerm(
-        func=mdp.velocity_command_levels,
+        func=mdp.forward_trot_then_turn_command_levels,
         params={
             "reward_term_name": "track_lin_vel_xy_exp",
             "reward_group_name": "rewards",
             "success_ratio": 0.8,
             "lin_x_step": 0.1,
-            "lin_y_step": 0.1,
+            "turn_start_vx": 0.3,
             "yaw_step": 0.1,
         },
     )
@@ -338,8 +458,9 @@ class B2RMVelocityHistoryCurriculumCfg(CurriculumCfg):
 
 @configclass
 class B2RMLegOnlyVelocityHistoryEnvCfg(B2RMVelocityEnvCfg):
-    """Deployable target2-start velocity control with eight-frame history."""
+    """Deployable target2-start velocity control with six-frame history."""
 
+    scene: B2RMVelocityEstimatorSceneCfg = B2RMVelocityEstimatorSceneCfg()
     observations: B2RMLegOnlyVelocityHistoryObservationsCfg = B2RMLegOnlyVelocityHistoryObservationsCfg()
     actions: B2RMFilteredLegOnlyActionsCfg = B2RMFilteredLegOnlyActionsCfg()
     rewards: B2RMLegOnlyVelocityHistoryRewardsCfg = B2RMLegOnlyVelocityHistoryRewardsCfg()
@@ -352,6 +473,9 @@ class B2RMLegOnlyVelocityHistoryEnvCfg(B2RMVelocityEnvCfg):
         self.scene.robot.init_state.pos = (0.0, 0.0, 0.58)
         self.scene.robot.init_state.joint_pos.update(B2RM_TARGET2_LEG_POS)
         self.scene.terrain.terrain_generator.sub_terrains = copy.deepcopy(FLAT_TRAINING_SUB_TERRAINS)
+        # Stage 1 is body-forward only. Fix world yaw as well so visual
+        # inspection shows every robot facing the same direction.
+        self.events.reset_base.params["pose_range"]["yaw"] = (0.0, 0.0)
         self.actions.leg_joint_pos.scale = 0.3
         # IsaacLab clips processed joint targets after applying scale/offset.
         # These limits are exactly target2 + 0.3 * [-1.0, 1.0], matching the
@@ -362,13 +486,21 @@ class B2RMLegOnlyVelocityHistoryEnvCfg(B2RMVelocityEnvCfg):
             ".*_thigh_joint": (0.37, 0.97),
             ".*_calf_joint": (-1.60, -1.00),
         }
+        self.rewards.rewards.feet_air_time.weight = 0.5
         self.rewards.rewards.feet_air_time.params.update(
-            vel_threshold=B2RM_GAIT_ACTIVATION_START,
-            activation_full=B2RM_GAIT_ACTIVATION_FULL,
+            vel_threshold=0.15,
+            activation_full=None,
         )
-        self.rewards.rewards.action_rate_l2.weight = -0.03
+        # Preserve smoothness, but do not make a real swing more expensive
+        # than a low-clearance shuffle.
+        self.rewards.rewards.action_rate_l2.weight = -0.02
+        self.rewards.rewards.dof_torques_l2.weight = -1.0e-05
+        self.rewards.rewards.dof_acc_l2.weight = -3.0e-07
+        self.rewards.rewards.work_l2.weight = -0.001
+        self.rewards.rewards.delta_torques.weight = -5.0e-08
+        self.rewards.rewards.feet_jerk.weight = -0.0001
         self.rewards.rewards.joint_deviation_legs.weight = -0.10
-        self.rewards.rewards.feet_slide.weight = -1.0
+        self.rewards.rewards.feet_slide.weight = -0.4
         self.rewards.rewards.ang_vel_xy_l2.weight = -0.35
         self.rewards.rewards.flat_orientation_l2.weight = -3.5
         self.rewards.rewards.roll_l2.weight = -2.5
@@ -376,18 +508,20 @@ class B2RMLegOnlyVelocityHistoryEnvCfg(B2RMVelocityEnvCfg):
             asset_name="robot",
             resampling_time_range=(5.0, 10.0),
             rel_standing_envs=0.10,
-            rel_forward_envs=0.0,
+            # Stage 1: acquire a clean forward trot before exposing turning,
+            # lateral motion, reverse walking, or their mixed commands.
+            rel_forward_envs=1.0,
             heading_command=False,
             debug_vis=False,
             ranges=mdp.UniformVelocityCommandCfg.Ranges(
-                lin_vel_x=(-0.10, 0.10),
-                lin_vel_y=(-0.10, 0.10),
-                ang_vel_z=(-0.20, 0.20),
+                lin_vel_x=(0.05, 0.10),
+                lin_vel_y=(0.0, 0.0),
+                ang_vel_z=(0.0, 0.0),
             ),
             limit_ranges=mdp.UniformVelocityCommandCfg.Ranges(
-                lin_vel_x=(-1.00, 1.00),
-                lin_vel_y=(-0.40, 0.40),
-                ang_vel_z=(-0.80, 0.80),
+                lin_vel_x=(0.05, 0.50),
+                lin_vel_y=(0.0, 0.0),
+                ang_vel_z=(-0.40, 0.40),
             ),
         )
 

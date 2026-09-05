@@ -751,6 +751,15 @@ class B2RMParkourEnvCfg(ManagerBasedRLEnvCfg):
         self.scene.robot.actuators = b2rm_18dof_delayed_actuators
 
 
+@configclass
+class B2RMParkourActionScale04EnvCfg(B2RMParkourEnvCfg):
+    """Controlled Parkour ablation: only increase leg residual authority."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.actions.leg_joint_pos.scale = 0.4
+
+
 ROUGH_TERRAINS_CFG_PLAY = copy.deepcopy(ROUGH_TERRAINS_CFG)
 for sub_terrain_name, sub_terrain_cfg in ROUGH_TERRAINS_CFG_PLAY.sub_terrains.items():
     sub_terrain_cfg.wall_prob = [0.0, 0.0, 0.0, 0.0]

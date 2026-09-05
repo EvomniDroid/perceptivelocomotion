@@ -24,6 +24,116 @@ def gait_phase(
     return torch.stack((torch.sin(angle), torch.cos(angle)), dim=-1)
 
 
+def basic_loco_trot_clock(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    period: float = 1.0 / 1.4,
+    phase_offsets: tuple[float, float, float, float] = (0.0, 0.5, 0.5, 0.0),
+    command_threshold: float = 0.02,
+) -> torch.Tensor:
+    """Return BasicLoco's four-leg phase clock in FL, FR, RL, RR order.
+
+    This clock is generated from control time, not a contact sensor, so the
+    exact same signal is available on the real robot. At a zero command it is
+    set to ``-1`` as in BasicLoco, marking a standing state rather than a gait
+    phase.
+    """
+    step_buf = getattr(env, "policy_step_buf", env.episode_length_buf)
+    global_phase = torch.remainder(step_buf.float() * env.step_dt / period, 1.0)
+    offsets = torch.tensor(phase_offsets, device=env.device, dtype=global_phase.dtype)
+    clock = torch.remainder(global_phase.unsqueeze(-1) + offsets, 1.0)
+
+    command = env.command_manager.get_command(command_name)
+    moving = torch.logical_or(
+        torch.norm(command[:, :2], dim=-1) > command_threshold,
+        torch.abs(command[:, 2]) > command_threshold,
+    )
+    return torch.where(moving.unsqueeze(-1), clock, torch.full_like(clock, -1.0))
+
+
+def _basic_loco_trot_stance(
+    env: ManagerBasedRLEnv,
+    period: float,
+    duty_factor: float,
+    phase_offsets: tuple[float, float, float, float],
+) -> torch.Tensor:
+    """Build BasicLoco's desired stance mask in FL, FR, RL, RR order."""
+    return _basic_loco_trot_leg_phase(env, period, phase_offsets) < duty_factor
+
+
+def _basic_loco_trot_leg_phase(
+    env: ManagerBasedRLEnv,
+    period: float,
+    phase_offsets: tuple[float, float, float, float],
+) -> torch.Tensor:
+    """Return the continuous BasicLoco phase of each leg."""
+    step_buf = getattr(env, "policy_step_buf", env.episode_length_buf)
+    global_phase = torch.remainder(step_buf.float() * env.step_dt / period, 1.0)
+    offsets = torch.tensor(phase_offsets, device=env.device, dtype=global_phase.dtype)
+    return torch.remainder(global_phase.unsqueeze(-1) + offsets, 1.0)
+
+
+def basic_loco_periodic_contact_suggestion(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    period: float = 1.0 / 1.4,
+    duty_factor: float = 0.65,
+    phase_offsets: tuple[float, float, float, float] = (0.0, 0.5, 0.5, 0.0),
+    contact_force_threshold: float = 5.0,
+    command_threshold: float = 0.02,
+) -> torch.Tensor:
+    """Reward the BasicLoco FL/RR, FR/RL periodic support schedule."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w_history[:, :, sensor_cfg.body_ids]
+    contact = torch.linalg.vector_norm(forces, dim=-1).amax(dim=1) > contact_force_threshold
+    desired_stance = _basic_loco_trot_stance(env, period, duty_factor, phase_offsets)
+    matches_schedule = (contact == desired_stance).float().mean(dim=-1)
+
+    command = env.command_manager.get_command(command_name)
+    moving = torch.logical_or(
+        torch.norm(command[:, :2], dim=-1) > command_threshold,
+        torch.abs(command[:, 2]) > command_threshold,
+    )
+    return matches_schedule * moving.float()
+
+
+def basic_loco_periodic_swing_clearance(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    period: float = 1.0 / 1.4,
+    duty_factor: float = 0.65,
+    phase_offsets: tuple[float, float, float, float] = (0.0, 0.5, 0.5, 0.0),
+    target_height: float = 0.08,
+    tolerance: float = 0.02,
+    command_threshold: float = 0.02,
+) -> torch.Tensor:
+    """Reward clearance only for the scheduled diagonal swing legs."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    leg_phase = _basic_loco_trot_leg_phase(env, period, phase_offsets)
+    desired_stance = leg_phase < duty_factor
+    desired_swing = ~desired_stance
+    terrain_height = env.scene.env_origins[:, 2].unsqueeze(-1)
+    foot_height = asset.data.body_pos_w[:, asset_cfg.body_ids, 2] - terrain_height
+
+    # A real swing starts and ends at ground height; only its midpoint should
+    # reach the configured peak. A constant peak target throughout swing
+    # rewards hopping and makes early gait exploration unnecessarily sparse.
+    swing_phase = torch.clamp((leg_phase - duty_factor) / max(1.0 - duty_factor, 1.0e-6), 0.0, 1.0)
+    desired_height = target_height * torch.sin(torch.pi * swing_phase)
+    height_error = foot_height - desired_height
+    score = torch.exp(-torch.square(height_error) / (tolerance * tolerance))
+    score = torch.sum(score * desired_swing.float(), dim=-1) / desired_swing.float().sum(dim=-1).clamp(min=1.0)
+
+    command = env.command_manager.get_command(command_name)
+    moving = torch.logical_or(
+        torch.norm(command[:, :2], dim=-1) > command_threshold,
+        torch.abs(command[:, 2]) > command_threshold,
+    )
+    return score * moving.float()
+
+
 def command_gait_activation(
     env: ManagerBasedRLEnv,
     command_name: str,
@@ -676,6 +786,49 @@ def swing_foot_clearance_terrain_relative(
     return score * torch.any(swing, dim=-1).float() * activation
 
 
+def touchdown_air_time_reward(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    minimum_air_time: float = 0.03,
+    optimal_air_time_start: float = 0.08,
+    optimal_air_time_end: float = 0.12,
+    long_swing_std: float = 0.05,
+    activation_start: float = 0.05,
+    activation_full: float = 0.15,
+) -> torch.Tensor:
+    """Reward a useful completed swing when the foot touches down.
+
+    Score completed swing time only at touchdown. Swings shorter than
+    ``minimum_air_time`` receive no reward; the score rises smoothly until
+    ``optimal_air_time_start``, stays maximal through the desired range, then
+    falls for excessively long swings. The smooth ramp avoids trapping early
+    training in a millisecond-contact shuffle gait.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+    last_air_time = contact_sensor.data.last_air_time[:, sensor_cfg.body_ids]
+
+    ramp_width = max(optimal_air_time_start - minimum_air_time, 1.0e-6)
+    ramp = torch.clamp((last_air_time - minimum_air_time) / ramp_width, 0.0, 1.0)
+    # Cubic smoothstep gives a continuous incentive between 30 ms and 80 ms.
+    rising_score = ramp * ramp * (3.0 - 2.0 * ramp)
+    long_swing_score = torch.exp(
+        -torch.square(torch.clamp(last_air_time - optimal_air_time_end, min=0.0))
+        / (long_swing_std * long_swing_std)
+    )
+    duration_score = torch.where(last_air_time <= optimal_air_time_end, rising_score, long_swing_score)
+    touchdown_score = duration_score * first_contact.float()
+
+    activation = command_gait_activation(
+        env,
+        command_name,
+        activation_start=activation_start,
+        activation_full=activation_full,
+    )
+    return torch.sum(touchdown_score, dim=-1) * activation
+
+
 def aperiodic_diagonal_contact_reward(
     env: ManagerBasedRLEnv,
     command_name: str,
@@ -708,6 +861,44 @@ def aperiodic_diagonal_contact_reward(
         activation_full=activation_full,
     )
     return pattern_score * activation
+
+
+def aperiodic_non_diagonal_contact_penalty(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    activation_start: float = 0.02,
+    activation_full: float = 0.15,
+) -> torch.Tensor:
+    """Penalize non-diagonal support patterns using simulation-only contacts.
+
+    A forward pair (FL+FR or RL+RR), a same-side pair, four-foot impact, and
+    all-foot flight are all undesirable for the flat-trot acquisition task.
+    The contact signal remains privileged: it shapes training only and is not
+    part of the deployable actor observation.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    contact = (contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0.0).float()
+    if contact.shape[1] != 4:
+        raise ValueError(f"aperiodic_non_diagonal_contact_penalty expects four feet, got {contact.shape[1]}.")
+
+    non_diagonal_pairs = (
+        contact[:, 0] * contact[:, 1]  # FL-FR: front pair
+        + contact[:, 2] * contact[:, 3]  # RL-RR: rear pair
+        + contact[:, 0] * contact[:, 2]  # FL-RL: left side
+        + contact[:, 1] * contact[:, 3]  # FR-RR: right side
+    )
+    # Allow a brief one-foot transfer, but penalize zero, three, or four feet.
+    contact_count = contact.sum(dim=-1)
+    count_error = torch.square(torch.clamp(torch.abs(contact_count - 2.0) - 0.5, min=0.0))
+
+    activation = command_gait_activation(
+        env,
+        command_name,
+        activation_start=activation_start,
+        activation_full=activation_full,
+    )
+    return (non_diagonal_pairs + count_error) * activation
 
 
 def feet_height_balance(
